@@ -6,30 +6,31 @@ library(data.table)
 library(stringr)
 library(jsonlite)
 
-# 1. Récupérer la liste des départements
+# 1. Dossier de ton projet local
+DOSSIER <- "C:/Users/camil/Documents/DepartementsPauvreteLycees/"
+
+# 2. Récupérer la liste des départements
 deps_df <- fromJSON("https://geo.api.gouv.fr/departements") %>%
   select(code, nom) %>%
   arrange(code)
 
-# 2. EXTRACTION GLOBALE DES COORDONNÉES DES CARREAUX (Correction ici)
-message("Extraction globale des coordonnées des carreaux INSEE...")
-donnees_carreaux$i_est_1km  <- as.numeric(str_extract(donnees_carreaux$idcar_1km, "(?<=E)\\d+"))
-donnees_carreaux$i_nord_1km <- as.numeric(str_extract(donnees_carreaux$idcar_1km, "(?<=N)\\d+(?=E)"))
+# 3. Extraction globale des coordonnées des carreaux
+if(!"i_est_1km" %in% colnames(donnees_carreaux)) {
+  donnees_carreaux$i_est_1km  <- as.numeric(str_extract(donnees_carreaux$idcar_1km, "(?<=E)\\d+"))
+  donnees_carreaux$i_nord_1km <- as.numeric(str_extract(donnees_carreaux$idcar_1km, "(?<=N)\\d+(?=E)"))
+}
 
-# 3. Préparation des centroïdes
 centroides_l93_trans <- st_transform(centroides_l93, 2154)
 
-# Dataframe pour stocker les liens du menu index
 dep_files <- data.frame(code = character(), nom = character(), filename = character(), stringsAsFactors = FALSE)
 
-# 4. Boucle de génération : un fichier HTML par département
+# 4. Boucle de génération : un fichier HTML par département avec hauteur fixe (750px)
 for(i in 1:nrow(deps_df)) {
   code_dept <- deps_df$code[i]
   nom_dept <- deps_df$nom[i]
   
   message(sprintf("Génération du département %s - %s (%d/%d)...", code_dept, nom_dept, i, nrow(deps_df)))
   
-  # Filtrer les carreaux du département
   carreaux_dept <- donnees_carreaux %>%
     filter(substr(as.character(lcog_geo), 1, 2) == code_dept) %>%
     filter(!is.na(i_est_1km) & !is.na(i_nord_1km))
@@ -49,12 +50,10 @@ for(i in 1:nrow(deps_df)) {
   pal_pauv <- colorNumeric(c("#22c55e", "#fef08a", "#ef4444"), domain = carreaux_sf$taux_pauvrete, na.color = "transparent")
   pal_prop <- colorNumeric("YlGn", domain = carreaux_sf$part_proprio, na.color = "transparent")
   
-  # Récupérer les contours des communes du département
   url_contours <- paste0("https://geo.api.gouv.fr/departements/", code_dept, "/communes?format=geojson&geometry=contour")
   communes_wgs84 <- tryCatch(st_read(url_contours, quiet = TRUE), error = function(e) NULL)
   if(is.null(communes_wgs84) || nrow(communes_wgs84) == 0) next
   
-  # Filtrer centroïdes et lycées
   dept_centroides_wgs84 <- centroides_l93_trans %>%
     filter(INSEE_DEP == code_dept) %>%
     st_transform(4326)
@@ -69,8 +68,8 @@ for(i in 1:nrow(deps_df)) {
            code_departement %in% c(code_dept, paste0("0", code_dept), str_remove(code_dept, "^0"))) %>%
     st_transform(4326)
   
-  # Construction de la carte Leaflet
-  m <- leaflet(width = "100%", height = "100%", options = leafletOptions(zoomControl = TRUE)) %>%
+  # Hauteur fixée à "750px" pour garantir l'affichage sans bug de conteneur
+  m <- leaflet(width = "100%", height = "750px", options = leafletOptions(zoomControl = TRUE)) %>%
     addProviderTiles(providers$Esri.WorldGrayCanvas, group = "Fond de carte") %>%
     addPolygons(
       data = carreaux_sf, color = "#cbd5e1", weight = 0.3,
@@ -116,30 +115,25 @@ for(i in 1:nrow(deps_df)) {
       options = layersControlOptions(collapsed = FALSE)
     )
   
-  # Structure HTML de la page départementale
+  # Structure HTML propre avec conteneur standard
   dept_html <- tags$html(
     tags$head(
       tags$style(HTML("
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #f8fafc; }
-        
-        /* En-tête fixe en haut */
-        #header { position: absolute; top: 0; left: 0; right: 0; height: 50px; background: #0f172a; color: white; padding: 0 25px; display: flex; align-items: center; justify-content: space-between; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        #header h1 { margin: 0; font-size: 18px; font-weight: 600; }
-        .btn-back { background: #38bdf8; color: #0f172a; padding: 6px 14px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px; transition: background 0.2s; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .header-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+        h1 { font-size: 22px; color: #0f172a; margin: 0; }
+        .btn-back { background: #38bdf8; color: #0f172a; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px; transition: background 0.2s; }
         .btn-back:hover { background: #0ea5e9; }
-        
-        /* Positionnement absolu de la carte pour éviter le bug de hauteur à 0px */
-        #map-container { position: absolute; top: 50px; bottom: 0; left: 0; right: 0; width: 100%; }
-        .html-widget, .leaflet { width: 100% !important; height: 100% !important; }
       "))
     ),
     tags$body(
-      tags$div(
-        tags$div(id = "header",
-                 tags$h1(paste("Département :", nom_dept, "(", code_dept, ")")),
-                 tags$a(href = "index.html", class = "btn-back", "← Retour au menu national")
-        ),
-        tags$div(id = "map-container", m)
+      tags$div(class = "container",
+               tags$div(class = "header-bar",
+                        tags$h1(paste("Département :", nom_dept, "(", code_dept, ")")),
+                        tags$a(href = "index.html", class = "btn-back", "← Retour au menu national")
+               ),
+               m
       )
     )
   )
@@ -151,8 +145,7 @@ for(i in 1:nrow(deps_df)) {
   dep_files <- rbind(dep_files, data.frame(code = code_dept, nom = nom_dept, filename = filename, stringsAsFactors = FALSE))
 }
 
-
-# 5. GÉNÉRATION DE LA PAGE D'ACCUEIL (index.html pour GitHub Pages)
+# 5. GÉNÉRATION DE LA PAGE D'ACCUEIL (index.html)
 list_items <- apply(dep_files, 1, function(row) {
   tags$li(
     tags$a(href = row["filename"], 
@@ -198,9 +191,7 @@ index_html <- tags$html(
   )
 )
 
-# Nommé obligatoirement index.html pour GitHub Pages
 index_path <- paste0(DOSSIER, "index.html")
 save_html(index_html, file = index_path)
 
-rstudioapi::viewer(normalizePath(index_path))
-message("Génération complète terminée ! Fichiers prêts dans : ", DOSSIER)
+message("✅ Génération complète terminée avec succès dans : ", DOSSIER)
