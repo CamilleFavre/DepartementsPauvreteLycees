@@ -120,24 +120,26 @@ for(i in 1:nrow(deps_df)) {
   dept_html <- tags$html(
     tags$head(
       tags$style(HTML("
-        html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #f8fafc; }
-        #app { display: flex; flex-direction: column; width: 100vw; height: 100vh; }
-        #header { background: #0f172a; color: white; padding: 12px 25px; height: 50px; display: flex; align-items: center; justify-content: space-between; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #f8fafc; }
+        
+        /* En-tête fixe en haut */
+        #header { position: absolute; top: 0; left: 0; right: 0; height: 50px; background: #0f172a; color: white; padding: 0 25px; display: flex; align-items: center; justify-content: space-between; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         #header h1 { margin: 0; font-size: 18px; font-weight: 600; }
         .btn-back { background: #38bdf8; color: #0f172a; padding: 6px 14px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px; transition: background 0.2s; }
         .btn-back:hover { background: #0ea5e9; }
-        #map-container { flex: 1; width: 100%; height: calc(100vh - 50px); }
+        
+        /* Positionnement absolu de la carte pour éviter le bug de hauteur à 0px */
+        #map-container { position: absolute; top: 50px; bottom: 0; left: 0; right: 0; width: 100%; }
         .html-widget, .leaflet { width: 100% !important; height: 100% !important; }
       "))
     ),
     tags$body(
-      tags$div(id = "app",
-               tags$div(id = "header",
-                        tags$h1(paste("Département :", nom_dept, "(", code_dept, ")")),
-                        # IMPORTANT : Lien vers index.html pour GitHub Pages
-                        tags$a(href = "index.html", class = "btn-back", "← Retour au menu national")
-               ),
-               tags$div(id = "map-container", m)
+      tags$div(
+        tags$div(id = "header",
+                 tags$h1(paste("Département :", nom_dept, "(", code_dept, ")")),
+                 tags$a(href = "index.html", class = "btn-back", "← Retour au menu national")
+        ),
+        tags$div(id = "map-container", m)
       )
     )
   )
