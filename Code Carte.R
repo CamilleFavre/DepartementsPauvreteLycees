@@ -1,7 +1,7 @@
 library(leaflet)
 library(sf)
 library(dplyr)
-library(htmltools)
+library(htmltools) 
 library(data.table)
 library(stringr)
 library(jsonlite)
