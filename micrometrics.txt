@@ -1,3 +1,5 @@
+In 2022, in France 21.8\% of high-school students are enrolled a private school with a state engagement. Historical and cultural differences across régions make this share different from an academia to another.
+
 Being in a school composed of goods students may positively affect your own results, indeed, if the behavior of your peers impact your scholar outcome then you may have incentives to look for the school composed of the best students.
 This behavior may affect both the offer and the demand for private school. Epple and Romano (1998) have constructed a theoretical model that shown that in presence of peer effect, private school discriminate through the tuition price in order to select the best, and the richest students (cream-skimming). This discrimination through price is effective because of two different chanels ; firstly, familly may observe the ability of their child, and will then be willing to pay a
 higher price, knowing the return on investment will be higher. Secondly, the scolar outcome of a children is highly correlated with his socio-economic background, discrimination through price will segregate to only select studnets with a high-SES background.
@@ -6,3 +8,21 @@ But this theoretical paper doesn't explain the impact of spatial distribution in
 In this context, we're interested in showing what explain the offer of private school in a city, and whether or not the spatial segregation plays a role in this offer. 
 
 This discrimination from private school is also effective in France. Indeed, private high-school are free to chose the tuition price, and to select whom they want. 
+
+
+\begin{table}[h!]
+  \centering
+  \caption*{\textbf{Tableau n° 8 : le financement des établissements selon le ministère chargé de l'éducation nationale (2020)}}
+  \vspace{0.5em}
+  \begin{tabular}{|l|l|c|c|c|c|c|}
+    \hline
+    & & \textbf{État} & \textbf{\parbox{2.2cm}{\centering Collectivités locales}} & \textbf{\parbox{2.5cm}{\centering Autres administrations publiques}} & \textbf{Ménages} & \textbf{Entreprises} \\
+    \hline
+    \textit{Public} & Collèges et Lycées & 74,3\,\% & 21,4\,\% & 0,3\,\% & 2,9\,\% & 1,1\,\% \\
+    \hline
+    \textit{\parbox{1.8cm}{Privé sous contrat}} & Collèges et Lycées & 67,2\,\% & 9,6\,\% & 0,0\,\% & 21,5\,\% & 1,7\,\% \\
+    \hline
+  \end{tabular}
+  \vspace{0.5em}
+  \caption*{\small \textit{Source : Cour des comptes d'après données DEPP, RERS 2022}}
+\end{table}
