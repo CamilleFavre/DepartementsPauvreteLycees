@@ -10,10 +10,10 @@ library(data.table)
 DOSSIER <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
 
 # 4. Lecture du premier fichier Parquet (Chemin absolu)
-mobsco23 <- read_parquet("C:/Users/camil/Downloads/RP2023_mobsco.parquet")
-
+# mobsco23 <- read_parquet("C:/Users/camil/Downloads/RP2023_mobsco.parquet")
+# 
 # 5. Affichage des colonnes pour vérification
-colnames(mobsco23)
+# colnames(mobsco23)
 
 # 6. Lecture du second fichier Parquet (Chemin construit proprement)
 annuairelycees <- read_parquet(file.path(DOSSIER, "fr-en-annuaire-education.parquet"))
