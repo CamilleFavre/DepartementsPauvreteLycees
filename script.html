@@ -1,0 +1,24 @@
+<script>
+document.addEventListener('click', function (e) {
+  const a = e.target.closest('a.quarto-xref[href^="#fig-"]');
+  if (!a) return;
+
+  const target = document.querySelector(a.getAttribute('href'));
+  if (!target) return;
+
+  const callout = target.closest('.callout');
+  if (callout) {
+    const body = callout.querySelector('.callout-body');
+    const header = callout.querySelector('.callout-header');
+    // déplie si le corps est réellement masqué, peu importe la classe
+    if (body && header && body.offsetHeight === 0) {
+      header.click();
+    }
+  }
+
+  e.preventDefault();
+  setTimeout(function () {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 150);
+});
+</script>

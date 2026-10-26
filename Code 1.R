@@ -7,7 +7,19 @@ library(data.table)
 
  
 # 3. Définition du dossier de travail (sans slash final)
-DOSSIER <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+# Détection du système d'exploitation
+os_name <- Sys.info()[["sysname"]]
+
+# Attribution du chemin selon l'OS
+DOSSIER <- if (os_name == "Windows") {
+  "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+} else if (os_name == "Darwin") {
+  "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+} else {
+  stop("Système d'exploitation non pris en charge.")
+}
+
+DOSSIER_MEMOIRE <- dirname(DOSSIER)
 
 # 4. Lecture du premier fichier Parquet (Chemin absolu)
 # mobsco23 <- read_parquet("C:/Users/camil/Downloads/RP2023_mobsco.parquet")
@@ -17,9 +29,7 @@ DOSSIER <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetri
 
 # 6. Lecture du second fichier Parquet (Chemin construit proprement)
 annuairelycees <- read_parquet(file.path(DOSSIER, "fr-en-annuaire-education.parquet"))
-donnees_carreaux <- fread("G:/Mon Drive/Education/Master APE 25-27/Mémoire/france_metro/carreaux_1km_met.csv")
-
-
+donnees_carreaux <- st_read(file.path(DOSSIER, "france_metro", "carreaux_200m_met.gpkg"))
 
 # =====================================================================
 # CODE 1bis - Distances aux lycées (remplace le Code 1 et les blocs
@@ -57,9 +67,23 @@ library(sf)
 # ---------------------------------------------------------------------
 # 0. PARAMÈTRES (AGREGER_PLM : identique aux Codes 2 et 3)
 # ---------------------------------------------------------------------
-DOSSIER      <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
-DOSSIER_ECO  <- "C:/Users/camil/Documents/DepartementsPauvreteLycees/data_eco"
-DOSSIER_OUT  <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+# Détection du système d'exploitation
+os_name <- Sys.info()[["sysname"]]
+
+# Attribution des chemins selon l'OS
+if (os_name == "Windows") {
+  DOSSIER_ECO <- "C:/Users/camil/Documents/DepartementsPauvreteLycees/data_eco"
+  DOSSIER_OUT <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+  
+} else if (os_name == "Darwin") { # macOS
+  # Remplacez les chemins ci-dessous par vos équivalents sur Mac :
+  DOSSIER_ECO <- "/Users/camillefavre/DepartementsPauvreteLycees/data_eco"
+  DOSSIER_OUT <- "/Users/camillefavre/DepartementsPauvreteLycees"
+  
+} else {
+  stop("Système d'exploitation non pris en charge.")
+}
+
 AGREGER_PLM  <- FALSE
 CENTROIDES_DEPUIS_CARREAUX <- TRUE    # FALSE = utiliser le geojson (perd les arrondissements)
 CHEMIN_CENTROIDES <- "C:/Users/camil/Downloads/centroides-communes-population.geojson"

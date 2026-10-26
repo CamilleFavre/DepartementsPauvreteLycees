@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Réseau des quartiers — carreaux Filosofi 200 m</title>
+<style>
+  :root{
+    --paper:#14130f; --ink:#e9e6df; --muted:#9b968b; --hair:#3c3933;
+    --accent:#8fb4d9; --panel:#1d1c18; --card:#25231e;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:-apple-system,"Helvetica Neue",Arial,sans-serif;
+    --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px}
+  #app{display:flex;flex-direction:column;height:100%}
+
+  header{display:flex;align-items:baseline;gap:18px;padding:14px 20px 10px;border-bottom:1px solid var(--hair)}
+  header h1{font:italic 700 21px var(--serif);margin:0;letter-spacing:.2px}
+  header h1 small{font:400 12px var(--sans);color:var(--muted);font-style:normal;margin-left:8px}
+  .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  select{font-family:var(--sans);font-size:13px;padding:4px 8px;border:1px solid var(--hair);background:var(--card);color:var(--ink)}
+  .btn{font:600 12px var(--sans);letter-spacing:.3px;padding:5px 12px;border:1px solid var(--muted);background:var(--card);color:var(--ink);cursor:pointer}
+  .btn:hover{background:var(--ink);color:#14130f}
+  .kstats{display:flex;gap:14px;font-size:12px;color:var(--muted);padding:6px 20px;border-bottom:1px solid var(--hair)}
+  .kstats b{color:var(--ink);font-family:var(--mono);font-weight:600}
+
+  #body{flex:1;display:flex;min-height:0}
+  aside{width:225px;flex:none;border-right:1px solid var(--hair);padding:14px 16px;overflow-y:auto}
+  aside h2{font:700 10px var(--sans);text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:14px 0 6px}
+  aside h2:first-child{margin-top:0}
+  .met{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--hair);
+    padding:7px 2px;font:500 13px var(--sans);color:var(--ink);cursor:pointer}
+  .met:hover{color:var(--accent)}
+  .met.on{font-weight:700;color:var(--accent)}
+  .met.on::after{content:"—";float:right;color:var(--accent)}
+  .met small{display:block;font:400 10.5px var(--sans);color:var(--muted)}
+  .legend-row{display:flex;align-items:center;gap:7px;margin:3px 0;font-size:12px}
+  .legend-row .pct{margin-left:auto;font-family:var(--mono);color:var(--muted)}
+  .swatch{width:11px;height:11px;border:1px solid rgba(255,255,255,.25);flex:none}
+  .note{font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px;border-top:1px solid var(--hair);padding-top:8px}
+  .scalebar{height:9px;width:190px;border:1px solid var(--hair);display:flex;margin:2px 0}
+  .scalebar div{flex:1}
+  .scale-lbl{display:flex;justify-content:space-between;width:190px;font:11px var(--mono);color:var(--muted)}
+
+  main{flex:1;position:relative;min-width:0;background:#0f0e0b}
+  main svg{width:100%;height:100%;display:block;cursor:grab}
+  main svg.panning{cursor:grabbing}
+
+  #status{position:absolute;left:0;right:0;bottom:0;display:flex;gap:18px;padding:5px 12px;
+    font:12px var(--mono);color:var(--muted);background:var(--panel);border-top:1px solid var(--hair);min-height:24px}
+  #status b{color:var(--ink);font-weight:600}
+
+  .zoomctl{position:absolute;right:12px;bottom:34px;display:flex;flex-direction:column;gap:2px}
+  .zoomctl button{width:26px;height:26px;border:1px solid var(--hair);background:var(--card);cursor:pointer;font:14px var(--mono)}
+  .zoomctl button:hover{background:var(--panel)}
+
+  #detail{width:300px;flex:none;border-left:1px solid var(--hair);background:var(--panel);overflow-y:auto;
+    padding:16px;transition:margin-right .18s ease}
+  #detail.hidden{margin-right:-300px}
+  #detail h3{font:700 22px var(--serif);margin:0 0 2px}
+  #detail .sub{font:11px var(--sans);text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+  .quad{margin:12px 0;padding:8px 10px;border-left:3px solid var(--hair);background:var(--card)}
+  .quad .q{font:700 13px var(--sans)}
+  .quad .d{font-size:11.5px;color:var(--muted);line-height:1.4}
+  table.kv{width:100%;border-collapse:collapse;margin:4px 0 10px}
+  table.kv td{padding:5px 0;border-bottom:1px solid var(--hair);font-size:12.5px}
+  table.kv td:last-child{text-align:right;font-family:var(--mono);font-weight:600}
+  .posbar{margin:8px 0 12px}
+  .posbar .lbl{display:flex;justify-content:space-between;font:10.5px var(--mono);color:var(--muted)}
+  .track{position:relative;height:8px;background:#3c3933;margin-top:3px}
+  .track .meanmark{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--muted)}
+  .track .dot{position:absolute;top:-3px;width:8px;height:14px;background:var(--accent);border:1px solid var(--ink)}
+  .neighlist{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}
+  .neighlist button{border:1px solid var(--hair);background:var(--card);padding:1px 6px;font:11px var(--mono);cursor:pointer}
+  .neighlist button:hover{border-color:var(--ink)}
+
+  #import{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:40}
+  #import.open{display:flex}
+  .dlg{width:min(640px,92vw);background:var(--panel);border:1px solid var(--ink);padding:18px}
+  .dlg h3{font:italic 700 17px var(--serif);margin:0 0 4px}
+  .dlg p{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 10px}
+  .dlg textarea{width:100%;height:200px;font:11px var(--mono);border:1px solid var(--hair);padding:8px;resize:vertical}
+  .dlg input[type=file]{font-size:12px;margin:0 0 8px}
+  .dlg .row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+  .msg{font:600 12px var(--sans);margin-top:8px}
+  .msg.ok{color:#2d6a2e}.msg.err{color:#a33227}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Réseau des quartiers <small>carreaux Filosofi 200 m · voisinage 285 m</small></h1>
+    <div class="hdr-right">
+      <select id="citysel" title="Ville"></select>
+      <button class="btn" id="importbtn">Importer les données…</button>
+    </div>
+  </header>
+
+  <div class="kstats" id="kstats"></div>
+
+  <div id="body">
+    <aside>
+      <h2>Couleur des carreaux</h2>
+      <div id="metrics"></div>
+      <h2>Légende</h2>
+      <div id="legend"></div>
+      <div class="note" id="quadnote"></div>
+      <div class="note">
+        Glisser : déplacer · molette : zoom · clic sur un carreau : fiche détaillée.
+        Le graphe est dessiné par les liens de voisinage (simulation de force), pas par la géographie.
+      </div>
+    </aside>
+
+    <main>
+      <svg id="net"></svg>
+      <div class="zoomctl">
+        <button id="zin" title="Zoomer">+</button>
+        <button id="zout" title="Dézoomer">−</button>
+        <button id="zreset" title="Réinitialiser la vue" style="font-size:9px">reset</button>
+      </div>
+      <div id="status"></div>
+    </main>
+
+    <div id="detail" class="hidden"></div>
+  </div>
+</div>
+
+<div id="import">
+  <div class="dlg">
+    <h3>Importer vos réseaux de villes</h3>
+    <p>Lancez le script R « export-reseaux-villes », puis chargez le fichier
+       <b>reseaux_villes.json</b> ci-dessous (ou collez son contenu). Les données sont conservées
+       localement dans ce navigateur (localStorage) — rien n'est envoyé sur un serveur.</p>
+    <input type="file" id="jsonfile" accept=".json,application/json" />
+    <textarea id="jsonpaste" placeholder="…ou collez ici le contenu de reseaux_villes.json"></textarea>
+    <div class="row">
+      <button class="btn" id="cleardata">Effacer les données importées</button>
+      <button class="btn" id="cancelimp">Annuler</button>
+      <button class="btn" id="doimport" style="background:var(--accent);color:#14130f">Importer</button>
+    </div>
+    <div class="msg" id="impmsg"></div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   DONNÉES — vos villes arrivent par le bouton Importer
+   (fichier reseaux_villes.json du script R).
+   ===================================================================== */
+var DATA={};
+try{var saved=localStorage.getItem("reseaux_villes");
+    if(saved){var o=JSON.parse(saved);for(var sk in o)DATA[sk]=o[sk];}}catch(e){}
+
+/* =====================================================================
+   OUTILS
+   ===================================================================== */
+function hex2rgb(h){return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]}
+function mix(a,b,t){var A=hex2rgb(a),B=hex2rgb(b);
+  return "rgb("+Math.round(A[0]+(B[0]-A[0])*t)+","+Math.round(A[1]+(B[1]-A[1])*t)+","+Math.round(A[2]+(B[2]-A[2])*t)+")"}
+function fmt(n){return Math.round(n).toLocaleString("fr-FR")}
+function el(id){return document.getElementById(id)}
+
+/* Palette sobre : encres et terres, pas de néon */
+var QUAD={
+  HH:{c:"#5b93c7",nom:"Cluster aisé",desc:"Carreau aisé entouré de carreaux aisés"},
+  LL:{c:"#d9684f",nom:"Cluster populaire",desc:"Carreau pauvre entouré de carreaux pauvres"},
+  HL:{c:"#a184c9",nom:"Poche de richesse",desc:"Carreau aisé entouré de carreaux pauvres"},
+  LH:{c:"#d4a545",nom:"Poche de pauvreté",desc:"Carreau pauvre entouré de carreaux aisés"}
+};
+var METRICS=[
+  {key:"quad",label:"Quadrant LISA",sub:"typologie spatiale, sans filtre"},
+  {key:"rev",label:"Revenu moyen",sub:"€ par unité de consommation"},
+  {key:"pauv",label:"Taux de pauvreté",sub:"% des ménages"},
+  {key:"ind",label:"Population",sub:"habitants du carreau"},
+  {key:"cont",label:"Contraste local",sub:"écart au revenu des voisins, €"}
+];
+var RAMP={pauv:["#4a4230","#d9684f"],ind:["#2e4258","#8fb4d9"],cont:["#45403a","#c9755c"]};
+
+/* =====================================================================
+   ÉTAT + DÉRIVÉS (quadrants calculés comme dans le Code 2 v2)
+   ===================================================================== */
+var S={city:null,metric:"quad",sel:null,hov:null,view:{k:1,x:0,y:0},
+       info:[],adj:[],meanRev:0,scale:{},parts:{HH:0,LL:0,HL:0,LH:0}};
+
+function computeDerived(city){
+  var N=city.nodes.length,adj=[],i;
+  for(i=0;i<N;i++)adj.push([]);
+  city.edges.forEach(function(e){adj[e[0]].push(e[1]);adj[e[1]].push(e[0])});
+  var sw=0,w=0;
+  city.nodes.forEach(function(n){w+=n.ind;sw+=n.rev*n.ind});
+  var meanRev=w?sw/w:0,ss=0;
+  city.nodes.forEach(function(n){ss+=n.ind*Math.pow(n.rev-meanRev,2)});
+  var sd=Math.sqrt(w?ss/w:0)||1;
+  var info=city.nodes.map(function(n){
+    var nm=adj[n.i].length
+      ? adj[n.i].reduce(function(s,j){return s+city.nodes[j].rev},0)/adj[n.i].length : n.rev;
+    var z=(n.rev-meanRev)/sd, wz=(nm-meanRev)/sd;
+    var quad=wz>=0?(z>=0?"HH":"LH"):(z>=0?"HL":"LL");
+    return Object.assign({},n,{deg:adj[n.i].length,neighMean:Math.round(nm),z:z,wz:wz,quad:quad,
+      cont:Math.abs(n.rev-nm)});
+  });
+  S.info=info;S.adj=adj;S.meanRev=meanRev;
+  var vals=info.map(function(n){return n[S.metric]});
+  S.scale={min:Math.min.apply(0,vals),max:Math.max.apply(0,vals),mean:meanRev};
+  S.parts={HH:0,LL:0,HL:0,LH:0};
+  info.forEach(function(n){S.parts[n.quad]++});
+}
+
+function nodeColor(n){
+  var m=S.metric;
+  if(m==="quad")return QUAD[n.quad].c;
+  var sc=S.scale,t=Math.max(0,Math.min(1,(n[m]-sc.min)/Math.max(sc.max-sc.min,1)));
+  if(m==="rev"){
+    var mid=(sc.mean-sc.min)/Math.max(sc.max-sc.min,1e-9);
+    return t<mid?mix("#d9684f","#9b968b",t/mid):mix("#9b968b","#5b93c7",(t-mid)/Math.max(1-mid,1e-9));
+  }
+  var r=RAMP[m]||["#ccc","#888"];return mix(r[0],r[1],t);
+}
+function nodeColorCol(v){return nodeColor({quad:"HH",rev:v,pauv:v,ind:v,cont:v})}
+
+/* =====================================================================
+   SIMULATION DE FORCE
+   ===================================================================== */
+var W=960,H=700,LINK=26,pos=null,simRaf=0;
+function seed(city){
+  var xs=city.nodes.map(function(n){return n.x}),ys=city.nodes.map(function(n){return n.y});
+  var x0=Math.min.apply(0,xs),x1=Math.max.apply(0,xs),y0=Math.min.apply(0,ys),y1=Math.max.apply(0,ys);
+  return city.nodes.map(function(n){
+    return {px:60+(n.x-x0)/Math.max(x1-x0,1)*(W-120),py:60+(n.y-y0)/Math.max(y1-y0,1)*(H-120),vx:0,vy:0};
+  });
+}
+function simStep(){
+  var REP=44,CELL=44,grid=new Map(),i;
+  for(i=0;i<pos.length;i++){
+    var key=((pos[i].px/CELL)|0)+":"+((pos[i].py/CELL)|0);
+    if(!grid.has(key))grid.set(key,[]);
+    grid.get(key).push(i);
+  }
+  for(i=0;i<pos.length;i++){
+    var cx=(pos[i].px/CELL)|0,cy=(pos[i].py/CELL)|0,dx,dy;
+    for(dx=-1;dx<=1;dx++)for(dy=-1;dy<=1;dy++){
+      var cell=grid.get((cx+dx)+":"+(cy+dy));if(!cell)continue;
+      for(var q=0;q<cell.length;q++){
+        var j=cell[q];if(j<=i)continue;
+        var rx=pos[i].px-pos[j].px,ry=pos[i].py-pos[j].py,d2=rx*rx+ry*ry;
+        if(d2>REP*REP||d2===0)continue;
+        var d=Math.sqrt(d2),f=(REP-d)/d*.06;rx*=f;ry*=f;
+        pos[i].vx+=rx;pos[i].vy+=ry;pos[j].vx-=rx;pos[j].vy-=ry;
+      }
+    }
+  }
+  S.city.edges.forEach(function(e){
+    var a=pos[e[0]],b=pos[e[1]];
+    var rx=b.px-a.px,ry=b.py-a.py,d=Math.hypot(rx,ry)||1,f=(d-LINK)/d*.05;
+    rx*=f;ry*=f;a.vx+=rx;a.vy+=ry;b.vx-=rx;b.vy-=ry;
+  });
+  var en=0;
+  pos.forEach(function(p){
+    p.vx+=(W/2-p.px)*.0008;p.vy+=(H/2-p.py)*.0008;
+    p.vx*=.82;p.vy*=.82;
+    p.px=Math.max(14,Math.min(W-14,p.px+p.vx));
+    p.py=Math.max(14,Math.min(H-14,p.py+p.vy));
+    en=Math.max(en,Math.abs(p.vx)+Math.abs(p.vy));
+  });
+  return en;
+}
+function startSim(){
+  cancelAnimationFrame(simRaf);
+  pos=seed(S.city);
+  var t=0;
+  (function step(){
+    var e=0;for(var k=0;k<4;k++)e=simStep();
+    t+=4;draw();
+    if(t<700&&e>.25)simRaf=requestAnimationFrame(step);
+  })();
+}
+
+/* =====================================================================
+   RENDU SVG
+   ===================================================================== */
+var svg=el("net"),SVGNS="http://www.w3.org/2000/svg";
+var gRoot=document.createElementNS(SVGNS,"g"),gEdges=document.createElementNS(SVGNS,"g"),
+    gNodes=document.createElementNS(SVGNS,"g");
+svg.setAttribute("viewBox","0 0 "+W+" "+H);
+gRoot.appendChild(gEdges);gRoot.appendChild(gNodes);svg.appendChild(gRoot);
+var circleEls=[],lineEls=[],nodeInd=null;
+
+function rebuild(){
+  gNodes.innerHTML="";gEdges.innerHTML="";circleEls=[];lineEls=[];
+  S.city.edges.forEach(function(){
+    var l=document.createElementNS(SVGNS,"line");
+    l.setAttribute("stroke","#57534a");l.setAttribute("stroke-width",".7");l.setAttribute("opacity",".5");
+    gEdges.appendChild(l);lineEls.push(l);
+  });
+  var meanInd=S.info.reduce(function(s,n){return s+n.ind},0)/Math.max(S.info.length,1);
+  nodeInd=S.info.map(function(n){return Math.max(2.6,Math.min(11,4.2*Math.sqrt(n.ind/meanInd)+1))});
+  var frag=document.createDocumentFragment();
+  S.info.forEach(function(n){
+    var c=document.createElementNS(SVGNS,"circle");
+    c.setAttribute("r",nodeInd[n.i]);
+    c.addEventListener("mouseenter",function(){S.hov=n.i;status();highlight()});
+    c.addEventListener("mouseleave",function(){S.hov=null;status();highlight()});
+    c.addEventListener("click",function(ev){ev.stopPropagation();
+      S.sel=(S.sel===n.i)?null:n.i;highlight();detail()});
+    frag.appendChild(c);circleEls.push(c);
+  });
+  gNodes.appendChild(frag);
+}
+
+function draw(){
+  var v=S.view;
+  gRoot.setAttribute("transform","translate("+v.x+","+v.y+") scale("+v.k+")");
+  S.city.edges.forEach(function(e,k){
+    var a=pos[e[0]],b=pos[e[1]],l=lineEls[k];
+    l.setAttribute("x1",a.px);l.setAttribute("y1",a.py);
+    l.setAttribute("x2",b.px);l.setAttribute("y2",b.py);
+  });
+  var selNei=(S.sel!=null&&S.adj[S.sel])||[];
+  S.info.forEach(function(n){
+    var c=circleEls[n.i],p=pos[n.i];if(!c)return;
+    c.setAttribute("cx",p.px);c.setAttribute("cy",p.py);
+    c.setAttribute("fill",nodeColor(n));
+    var sel=S.sel===n.i,hov=S.hov===n.i;
+    c.setAttribute("r",nodeInd[n.i]*(sel||hov?1.4:1));
+    c.setAttribute("stroke",sel?"#e9e6df":hov?"#c0bcb2":"rgba(0,0,0,.55)");
+    c.setAttribute("stroke-width",sel?"1.8":hov?"1.4":"1");
+    c.setAttribute("opacity",(S.sel!=null&&!sel&&selNei.indexOf(n.i)<0)?.25:1);
+  });
+}
+
+function highlight(){
+  var act=S.sel!=null;
+  S.city.edges.forEach(function(e,k){
+    var on=act&&(e[0]===S.sel||e[1]===S.sel);
+    lineEls[k].setAttribute("stroke",on?"#8fb4d9":"#57534a");
+    lineEls[k].setAttribute("opacity",on?".9":act?".12":".5");
+    lineEls[k].setAttribute("stroke-width",on?"1.6":".7");
+  });
+  draw();
+}
+
+function status(){
+  var s=el("status");
+  if(S.hov==null){s.innerHTML="<span>"+S.info.length+" carreaux · "+S.city.nLiens+" liens — survolez un carreau</span>";return}
+  var n=S.info[S.hov];
+  s.innerHTML="<span>Carreau <b>#"+n.i+"</b></span>"+
+    "<span>revenu <b>"+fmt(n.rev)+" €/uc</b></span>"+
+    "<span>pauvreté <b>"+n.pauv+"%</b></span>"+
+    "<span><b>"+fmt(n.ind)+"</b> hab.</span>"+
+    "<span style=\"color:"+QUAD[n.quad].c+";font-weight:700\">"+n.quad+"</span>"+
+    "<span>"+n.deg+" voisins</span>";
+}
+
+/* =====================================================================
+   PANNEAU DÉTAIL
+   ===================================================================== */
+function bar(label,val,min,max,mean,unit){
+  var t=Math.max(0,Math.min(1,(val-min)/Math.max(max-min,1)));
+  return "<div class=\"posbar\"><div class=\"lbl\"><span>"+label+"</span><span>"+fmt(val)+" "+unit+"</span></div>"+
+    "<div class=\"track\">"+(mean!=null?"<div class=\"meanmark\" style=\"left:50%\"></div>":"")+
+    "<div class=\"dot\" style=\"left:calc("+(t*100)+"% - 4px)\"></div></div>"+
+    "<div class=\"lbl\"><span>"+fmt(min)+"</span>"+(mean!=null?"<span>moy. "+fmt(mean)+"</span>":"")+"<span>"+fmt(max)+"</span></div></div>";
+}
+function detail(){
+  var d=el("detail");
+  if(S.sel==null){d.classList.add("hidden");d.innerHTML="";return}
+  var n=S.info[S.sel],q=QUAD[n.quad],nei=S.adj[n.i].map(function(j){return S.info[j]});
+  var revs=S.info.map(function(x){return x.rev});
+  var nrev=nei.length?nei.reduce(function(s,x){return s+x.rev},0)/nei.length:0;
+  d.classList.remove("hidden");
+  d.innerHTML=
+    "<div class=\"sub\">Carreau Filosofi 200 m</div><h3>#"+n.i+"</h3>"+
+    "<div class=\"quad\" style=\"border-left-color:"+q.c+"\"><div class=\"q\" style=\"color:"+q.c+"\">"+n.quad+" — "+q.nom+"</div>"+
+    "<div class=\"d\">"+q.desc+".</div></div>"+
+    "<table class=\"kv\">"+
+    "<tr><td>Revenu moyen</td><td>"+fmt(n.rev)+" €/uc</td></tr>"+
+    "<tr><td>Taux de pauvreté</td><td>"+n.pauv+" %</td></tr>"+
+    "<tr><td>Population</td><td>"+fmt(n.ind)+" hab.</td></tr>"+
+    "<tr><td>Ménages</td><td>"+fmt(n.men)+"</td></tr>"+
+    "<tr><td>Ménages pauvres</td><td>"+fmt(n.menPauv)+"</td></tr>"+
+    "<tr><td>Voisins (&lt; 285 m)</td><td>"+n.deg+"</td></tr>"+
+    "<tr><td>z-score revenu</td><td>"+(n.z>=0?"+":"")+n.z.toFixed(2)+"</td></tr>"+
+    "<tr><td>Revenu moyen des voisins</td><td>"+fmt(n.neighMean)+" €/uc</td></tr>"+
+    "<tr><td>Contraste local</td><td>"+fmt(n.cont)+" €</td></tr></table>"+
+    bar("Revenu dans la commune",n.rev,Math.min.apply(0,revs),Math.max.apply(0,revs),S.meanRev,"€/uc")+
+    bar("Pauvreté dans la commune",n.pauv,0,Math.max.apply(0,S.info.map(function(x){return x.pauv})),null,"%")+
+    (nei.length?"<div class=\"sub\">Voisinage ("+nei.length+")</div>"+
+     "<div style=\"font-size:11.5px;color:var(--muted)\">Revenu moyen des voisins : <b style=\"color:var(--ink)\">"+fmt(nrev)+" €/uc</b>"+
+     (nrev<n.rev?" — ce carreau est plus riche que son entourage.":nrev>n.rev?" — ce carreau est plus pauvre que son entourage.":".")+"</div>"+
+     "<div class=\"neighlist\">"+nei.map(function(x){return "<button data-go=\""+x.i+"\" style=\"color:"+QUAD[x.quad].c+";font-weight:700\">#"+x.i+"</button>"}).join("")+"</div>":"");
+  Array.prototype.forEach.call(d.querySelectorAll("[data-go]"),function(b){
+    b.addEventListener("click",function(){S.sel=+b.getAttribute("data-go");detail();highlight()});
+  });
+}
+
+/* =====================================================================
+   COMMANDES : métrique, légende, villes
+   ===================================================================== */
+function renderMetrics(){
+  el("metrics").innerHTML=METRICS.map(function(m){
+    return "<button class=\"met"+(S.metric===m.key?" on":"")+"\" data-m=\""+m.key+"\">"+m.label+
+      "<small>"+m.sub+"</small></button>";
+  }).join("");
+  Array.prototype.forEach.call(el("metrics").querySelectorAll("[data-m]"),function(b){
+    b.addEventListener("click",function(){S.metric=b.getAttribute("data-m");
+      computeDerived(S.city);renderMetrics();renderLegend();draw();if(S.sel!=null)detail()});
+  });
+}
+function renderLegend(){
+  var L=el("legend"),m=S.metric;
+  if(m==="quad"){
+    var tot=S.info.length||1;
+    L.innerHTML=Object.keys(QUAD).map(function(q){
+      return "<div class=\"legend-row\"><span class=\"swatch\" style=\"background:"+QUAD[q].c+"\"></span>"+
+        "<span><b>"+q+"</b> "+QUAD[q].nom+"</span><span class=\"pct\">"+Math.round(S.parts[q]/tot*100)+"%</span></div>";
+    }).join("");
+  }else{
+    var sw="";for(var k=0;k<=20;k++)sw+="<div style=\"background:"+nodeColorCol(S.scale.min+(S.scale.max-S.scale.min)*k/20)+"\"></div>";
+    L.innerHTML="<div class=\"scalebar\">"+sw+"</div><div class=\"scale-lbl\"><span>"+fmt(S.scale.min)+
+      "</span>"+(m==="rev"?"<span>moy. "+fmt(S.scale.mean)+"</span>":"")+"<span>"+fmt(S.scale.max)+"</span></div>";
+  }
+  el("quadnote").innerHTML=S.metric==="quad"
+    ?Object.keys(QUAD).map(function(q){return "<b style=\"color:"+QUAD[q].c+"\">"+q+"</b> : "+QUAD[q].desc+"."}).join("<br>")
+    :"Le contraste local mesure l'écart de revenu entre un carreau et la moyenne de ses voisins immédiats.";
+}
+function cityList(){
+  return Object.keys(DATA).map(function(k){return DATA[k]})
+    .sort(function(a,b){return b.pop-a.pop});
+}
+function renderCitySel(){
+  var s=el("citysel");
+  s.innerHTML=cityList().map(function(c){
+    return "<option value=\""+c.code+"\""+(S.city&&S.city.code===c.code?" selected":"")+">"+c.nom+" — "+fmt(c.pop)+" hab.</option>";
+  }).join("");
+}
+function loadCity(code){
+  S.city=DATA[code]||cityList()[0];
+  S.sel=null;S.hov=null;S.view={k:1,x:0,y:0};
+  if(!S.city){renderCitySel();el("kstats").innerHTML="";
+    el("metrics").innerHTML="";el("legend").innerHTML="";el("quadnote").innerHTML="";
+    el("status").innerHTML="<span>Aucune ville chargée — cliquez sur « Importer les données… »</span>";
+    gNodes.innerHTML="";gEdges.innerHTML="";detail();
+    el("import").classList.add("open");return}
+  computeDerived(S.city);
+  renderCitySel();renderMetrics();renderLegend();
+  el("kstats").innerHTML=
+    "<span>Population <b>"+fmt(S.city.pop)+"</b></span>"+
+    "<span>Revenu moyen <b>"+fmt(S.city.revMoyen)+" €/uc</b></span>"+
+    "<span>Taux de pauvreté <b>"+S.city.tauxPauv+" %</b></span>"+
+    "<span>Carreaux <b>"+S.city.nCarreaux+"</b></span>"+
+    "<span>Liens <b>"+S.city.nLiens+"</b></span>";
+  rebuild();detail();startSim();status();
+}
+el("citysel").addEventListener("change",function(e){loadCity(e.target.value)});
+
+/* ---------- pan / zoom ---------- */
+var drag=null;
+svg.addEventListener("pointerdown",function(e){drag={x:e.clientX,y:e.clientY,vx:S.view.x,vy:S.view.y,moved:0};svg.classList.add("panning")});
+window.addEventListener("pointermove",function(e){
+  if(!drag)return;
+  var dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.moved=Math.max(drag.moved,Math.hypot(dx,dy));
+  S.view.x=drag.vx+dx;S.view.y=drag.vy+dy;draw();
+});
+window.addEventListener("pointerup",function(){drag=null;svg.classList.remove("panning")});
+svg.addEventListener("click",function(){S.sel=null;detail();highlight()});
+svg.addEventListener("wheel",function(e){e.preventDefault();
+  S.view.k=Math.max(.4,Math.min(4,S.view.k*(e.deltaY>0?.9:1.1)));draw()},{passive:false});
+el("zin").addEventListener("click",function(){S.view.k=Math.min(4,S.view.k*1.2);draw()});
+el("zout").addEventListener("click",function(){S.view.k=Math.max(.4,S.view.k/1.2);draw()});
+el("zreset").addEventListener("click",function(){S.view={k:1,x:0,y:0};draw()});
+
+/* =====================================================================
+   IMPORT JSON (fichier ou collage) — persisté en localStorage
+   ===================================================================== */
+var imp=el("import");
+el("importbtn").addEventListener("click",function(){imp.classList.add("open");el("impmsg").textContent=""});
+el("cancelimp").addEventListener("click",function(){imp.classList.remove("open")});
+imp.addEventListener("click",function(e){if(e.target===imp)imp.classList.remove("open")});
+el("jsonfile").addEventListener("change",function(){
+  var f=el("jsonfile").files[0];if(!f)return;
+  var rd=new FileReader();
+  rd.onload=function(){el("jsonpaste").value=rd.result};
+  rd.readAsText(f);
+});
+function doImport(txt){
+  var msg=el("impmsg");
+  try{
+    var parsed=JSON.parse(txt);
+    var arr=Array.isArray(parsed)?parsed:Object.keys(parsed).map(function(k){return parsed[k]});
+    var n=0,first=null;
+    arr.forEach(function(v){
+      if(v&&v.code&&Array.isArray(v.nodes)&&Array.isArray(v.edges)){DATA[v.code]=v;n++;if(!first)first=v}
+    });
+    if(!n)throw new Error("aucune ville valide (code + nodes + edges requis)");
+    Object.keys(DATA).forEach(function(k){delete DATA[k]});arr.forEach(function(v){if(v&&v.code&&Array.isArray(v.nodes)&&Array.isArray(v.edges))DATA[v.code]=v});
+    localStorage.setItem("reseaux_villes",JSON.stringify(DATA));
+    msg.className="msg ok";msg.textContent=n+" ville(s) importée(s).";
+    loadCity(first.code);
+    setTimeout(function(){imp.classList.remove("open")},700);
+  }catch(err){
+    msg.className="msg err";msg.textContent="JSON invalide : "+err.message;
+  }
+}
+el("doimport").addEventListener("click",function(){doImport(el("jsonpaste").value)});
+el("cleardata").addEventListener("click",function(){
+  localStorage.removeItem("reseaux_villes");
+  Object.keys(DATA).forEach(function(k){delete DATA[k]});
+  loadCity(null);
+  el("impmsg").className="msg ok";el("impmsg").textContent="Données importées effacées.";
+});
+
+/* ---------- démarrage ---------- */
+loadCity(null);
+</script>
+</body>
+</html>

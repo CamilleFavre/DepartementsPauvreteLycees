@@ -1,0 +1,96 @@
+/*-- scss:defaults --*/
+$body-bg: #111418;
+$body-color: #e6e4dd;
+$link-color: #7ab3d9;
+$callout-color-note: #1b2833;
+
+/*-- scss:rules --*/
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;600&display=swap');
+
+body {
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  max-width: 750px;
+  margin: 3rem auto;
+  padding: 0 1.5rem;
+  background: #111418;
+  color: #e6e4dd;
+}
+
+h1, h2, h3, .title, .subtitle, .toc-title {
+  font-family: "Inter", system-ui, sans-serif;
+  color: #f2f0ea;
+  letter-spacing: -0.01em;
+}
+
+h2 { font-size: 1.25rem; font-weight: 600; margin-top: 2.5rem; }
+
+/* Box sombre discrète */
+.quarto-callout {
+  border-left: 3px solid #7ab3d9;
+  background: #1a1f26;
+  padding: 0.75rem 1rem;
+}
+.quarto-callout .callout-title { color: #cfd8de; }
+
+/* Images : léger cadre pour rester lisibles sur fond sombre */
+img {
+  border-radius: 2px;
+  background: #fff;   /* les cartes claires restent lisibles */
+  padding: 4px;
+}
+
+figcaption, .caption {
+  font-family: "Inter", sans-serif;
+  font-size: 0.82rem;
+  color: #9aa3ab;
+  text-align: center;
+  margin-top: 0.5rem;
+}
+
+code { background: #1e232a; color: #e0c8a0; border-radius: 2px; }
+a { text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+
+
+
+/* ===== Tableaux kable : largeur naturelle ===== */
+.cell-output-display:has(table) {
+  width: fit-content;   /* le bloc de sortie épouse la largeur du tableau */
+}
+
+.cell-output-display table {
+  width: auto !important;
+  border-collapse: collapse;
+  margin-left: 0;      /* aligne le tableau à gauche du texte, comme vos h2 */
+}
+
+/* ===== Style sombre cohérent avec le thème ===== */
+.cell-output-display table th {
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #f2f0ea;                 /* blanc cassé sur fond sombre, pas noir */
+  background: #1a1f26;
+  border-bottom: 1px solid #7ab3d9;
+  padding: 0.45rem 0.9rem;
+}
+
+.cell-output-display table td {
+  color: $body-color;
+  border-bottom: 1px solid #2a3038;
+  padding: 0.4rem 0.9rem;
+}
+
+/* chiffres alignés à droite pour les colonnes numériques */
+.cell-output-display table td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;   /* colonnes de chiffres alignées */
+}
+
+/* ligne de séparation nette sous l'en-tête */
+.cell-output-display table thead tr {
+  border-bottom: 2px solid #3a424c;
+}

@@ -23,9 +23,24 @@ library(sf)
 # ---------------------------------------------------------------------
 # 0. PARAMÈTRES  (AGREGER_PLM doit être IDENTIQUE à celui du Code 2)
 # ---------------------------------------------------------------------
-DOSSIER           <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
-DOSSIER_OUT       <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
-CHEMIN_CENTROIDES <- "C:/Users/camil/Downloads/centroides-communes-population.geojson"
+# Détection du système d'exploitation
+os_name <- Sys.info()[["sysname"]]
+
+# Attribution des chemins selon l'OS
+if (os_name == "Windows") {
+  DOSSIER           <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT       <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+  CHEMIN_CENTROIDES <- "C:/Users/camil/Documents/DepartementsPauvreteLycees/centroides-communes-population.geojson"
+  
+} else if (os_name == "Darwin") { # macOS
+  DOSSIER           <- "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT       <- "/Users/camillefavre/DepartementsPauvreteLycees"
+  CHEMIN_CENTROIDES <- "/Users/camillefavre/DepartementsPauvreteLycees/centroides-communes-population.geojson" # Ajustez si besoin
+  
+} else {
+  stop("Système d'exploitation non pris en charge.")
+}
+
 AGREGER_PLM       <- FALSE
 RAYON_KM          <- 10
 

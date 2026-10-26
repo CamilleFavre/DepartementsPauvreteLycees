@@ -13,9 +13,25 @@
 
 library(dplyr); library(stringr); library(arrow); library(sf)
 
-DOSSIER      <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
-DOSSIER_OUT  <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
-DOSSIER_ECO  <- file.path(DOSSIER_OUT, "data_eco")
+# Détection automatique du système d'exploitation
+os_name <- Sys.info()[["sysname"]]
+
+# Attribution des chemins de base selon l'OS
+if (os_name == "Windows") {
+  DOSSIER     <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+  
+} else if (os_name == "Darwin") { # macOS
+  DOSSIER     <- "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT <- "/Users/camillefavre/DepartementsPauvreteLycees"
+  
+} else {
+  stop("Système d'exploitation non pris en charge.")
+}
+
+# Dérivation automatique du dossier ECO (gère les barres de manière propre selon l'OS)
+DOSSIER_ECO <- file.path(DOSSIER_OUT, "data_eco")
+
 AGREGER_PLM  <- FALSE
 RAYON_KM     <- 5          # <- collège : marché local
 DEMI_CARREAU <- 100

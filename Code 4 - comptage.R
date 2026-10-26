@@ -25,7 +25,24 @@ library(AER)       # dispersiontest()
 library(ggplot2)
 # MASS est appelé via MASS::glm.nb (évite le conflit MASS::select / dplyr::select)
 
-DOSSIER_OUT <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+# Détection automatique du système d'exploitation
+os_name <- Sys.info()[["sysname"]]
+
+# Attribution des chemins selon l'OS
+if (os_name == "Windows") {
+  DOSSIER           <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT       <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+  CHEMIN_CENTROIDES <- "C:/Users/camil/Downloads/centroides-communes-population.geojson"
+  
+} else if (os_name == "Darwin") { # macOS
+  DOSSIER           <- "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT       <- "/Users/camillefavre/DepartementsPauvreteLycees"
+  CHEMIN_CENTROIDES <- "/Users/camillefavre/Downloads/centroides-communes-population.geojson"
+  
+} else {
+  stop("Système d'exploitation non pris en charge.")
+}
+
 VAR_Y       <- "nb_lycees_prives"     # alternatives : "nb_prives_gt", "nb_prives_sous_contrat"
 set.seed(2025)
 
