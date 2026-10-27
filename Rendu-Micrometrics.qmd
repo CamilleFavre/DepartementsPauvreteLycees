@@ -24,6 +24,7 @@ format:
     reference-location: margin   # notes de bas de page en marge, très "papier"
 ---
 
+
 Micrometrics
 
 # Introduction
@@ -46,7 +47,7 @@ However, this theoretical paper does not explain the impact of the spatial distr
 
 # Methodology
 
-## Measuring inequality within cities: Theil and Moran indices
+## Construction of the city indices 
 
 ### Filosofi cells 
 
@@ -427,6 +428,9 @@ freq %>%
   kable_styling(full_width = FALSE)
 ```
 
+### The choice of the count model
+
+#### Poisson model : a bad idea regarding our data ?
 
 The mean of this distribution is `r sprintf("%.2f", moy)` and the variance is `r sprintf("%.2f", var_y)` (figure @fig-distrib-colleges). We can seee that we clearly have overdispersion, hence, using a Poisson model would be innapropriate here.  
 
@@ -485,9 +489,90 @@ p
 Indeed in a poisson distribution we have : 
 $$
 y_i \mid x_i \sim \text{Poisson}(\mu_i), \qquad \mu_i = \mathbb{E}(y_i \mid x_i) = \mathbb{V}(y_i \mid x_i)
-$$ {#eq-poisson}
+$$
 
-In our data, however, $\widehat{\mathbb{E}}(y_i \mid x_i) < \widehat{\mathbb{V}}(y_i \mid x_i)$: the variance is 4.82 for a mean of 1.38, revealing substantial overdispersion.
+#### Testing for overdispersion 
+
+In our data, however, $\widehat{\mathbb{E}}(y_i \mid x_i) < \widehat{\mathbb{V}}(y_i \mid x_i)$: the variance is 4.82 for a mean of 1.38, revealing a potential overdispersion.
+To test this overdispersion we will use a Cameron-Triverdi (1990) test :
+$$
+\begin{aligned}
+H_0 &: \quad \mathbb{V}(y_i \mid x_i) = \mu_i \\
+H_1 &: \quad \mathbb{V}(y_i \mid x_i) = \mu_i + \alpha\, g(\mu_i)
+\end{aligned}
+$$
+Since the Poisson MLE remains consistent for the conditional mean even under variance misspecification (Gouriéroux, Monfort and Trognon, 1984), $\hat \mu_i$ can be treated as a proxy for$\mu_i$, Cameron-Triverdi (1990)  propose a t-test of $\alpha = 0$ in the following OLS regression
+$$
+(y_i-\hat\mu_i)^2 - y_i = \alpha \cdot g(\hat \mu_i) + \varepsilon_i
+$$
+That's because, under $H_0$, if we take expectations :
+$$
+\begin{aligned}
+\mathbb{E}\left((y_i-\hat\mu_i)^2 - y_i\right) &= \mathbb{E}\left(\alpha \cdot g(\hat \mu_i) + \varepsilon_i\right) \\
+\mathbb{E}\left((y_i-\hat\mu_i)^2 \right) - \mathbb{E}\left(y_i\right) &= \alpha\cdot \mathbb{E}\left( g(\hat \mu_i) \right) \\
+\mu_i - \mu_i &= \alpha \cdot \mathbb{E}\left( g(\hat \mu_i) \right) 
+\end{aligned}
+$$
+And under $H_1$ :
+$$
+\begin{aligned}
+\mathbb{E}\left((y_i-\hat\mu_i)^2 - y_i\right) &= \mathbb{V}(y_i \mid x_i) - \mu_i \\
+\mathbb{E}\left((y_i-\hat\mu_i)^2 - y_i\right) &=  \mu_i + \alpha\, g(\mu_i)- \mu_i 
+\end{aligned}
+$$
+We can test with $g(.)$ being the square or identity function, in order to test for the negative binomial distribution that we introduce just after. 
+
+Our test is then a t-test of $\alpha =0$ in the following OLS estimation (here for $g(x) = x^2$)
+$$
+(y_i-\hat\mu_i)^2 - y_i = \alpha \cdot \hat \mu_i^2 + \varepsilon_i
+$$
+```{r setup-comptage, include=FALSE, message=FALSE, warning=FALSE}
+# Chunk setup-comptage — données et modèles viennent du cache
+library(dplyr); library(knitr); library(kableExtra)
+library(sandwich); library(lmtest); library(AER)
+
+os_name <- Sys.info()[["sysname"]]
+DOSSIER_OUT <- if (os_name == "Windows")
+  "C:/Users/camil/Documents/DepartementsPauvreteLycees" else
+  "/Users/camillefavre/DepartementsPauvreteLycees"
+
+charg <- readRDS(file.path(DOSSIER_OUT, "modeles_comptage.rds"))
+list2env(charg, envir = globalenv())
+
+m_p <- modeles$Poisson; m_nb <- modeles$NB2
+
+# Descriptives de la variable dépendante, sur l'échantillon d'estimation
+stats_y <- data.frame(
+  moyenne   = mean(d_mod$y),
+  variance  = var(d_mod$y),
+  part_zeros = mean(d_mod$y == 0))
+
+# Alpha de la régression auxiliaire : (y-mu)^2 - y = alpha * g(mu), sans constante
+alpha_aux <- function(m, trafo) {
+  y  <- model.response(model.frame(m))
+  mu <- fitted(m)
+  g  <- if (trafo == 1) mu else mu^2
+  d  <- (y - mu)^2 - y
+  unname(coef(lm(d ~ 0 + g))[1])   # ~ 0 + : pas de constante, comme dans le texte
+}
+```
+
+```{r tbl-cameron-trivedi, echo=FALSE, message=FALSE}
+#| tbl-cap: "Cameron--Trivedi overdispersion test on the Poisson model (M4)"
+
+tibble::tribble(
+  ~`Alternative variance`,  ~`$\\hat\\alpha$ (dispersion)`, ~`$z$ statistic`, ~`$p$-value`,
+  "$\\mu + \\alpha \\mu$",   alpha_aux(m_p, 1),           ct_nb1$statistic, ct_nb1$p.value,
+  "$\\mu + \\alpha \\mu^2$", alpha_aux(m_p, 2),           ct_nb2$statistic, ct_nb2$p.value
+) %>%
+  mutate(`$p$-value` = ifelse(`$p$-value` < 1e-4,
+                             "< 0.0001", format.pval(`$p$-value`, digits = 3))) %>%
+  knitr::kable(format = "pipe", digits = 3, align = "lccc")
+```
+
+The Cameron--Trivedi test, performed on the Poisson specification with academy fixed effects, strongly rejects equidispersion against the NB2 alternative ($z = `r round(ct_nb2$statistic, 2)`$, $p `r ifelse(ct_nb2$p.value < 0.001, "< 0.001", paste0("= ", round(ct_nb2$p.value, 3)))`$). Excess dispersion is therefore a first-order feature of the data, and a single-equation Poisson model would understate the standard errors of the inequality coefficients.
+
+#### Adressing the issue of overdispersion : The Negative Binomial model
 
 To adress the issue of surdispersion, we should add a disturbance term to the parameter : $\log \left(\mathbb{E}(y_i \mid x_i)\right) = x_i \theta + \epsilon$, so that the probability is 
 $$
@@ -499,8 +584,40 @@ u_i \sim \frac{\alpha^{\alpha}}{\Gamma(\alpha)}e^{-\alpha u_i}u_i^{\alpha-1}
 $$
 In that case, 
 $$
-\mathbb{P}(y_i = k \mid x_i) =  \frac{\Gamma(\alpha + k)}{\Gamma(k + 1)\Gamma(\alpha)}r_i^{k}(1-r_i)^{\alpha-1}, \qquad r_i = \frac{\lambda_i}{\lambda_i + \alpha}
+\mathbb{P}(y_i = k \mid x_i) =  \frac{\Gamma(\alpha + k)}{\Gamma(k + 1)\Gamma(\alpha)}r_i^{k}(1-r_i)^{\alpha-1}, \qquad r_i = \frac{\mu_i}{\mu_i + \alpha}
 $$
+This is the PDF of a negative binomial distribution with $\mathbb{E}(y_i\mid x_i) = \mu_i$ and $\mathbb{V}(y_i\mid x_i) = \mu_i( 1 + \frac{\mu_i}{\alpha})$ . 
+
+The Maximum likelyhood estimation will then estimate both $\theta$ and $\alpha$, in order to handle overdispersion. 
+
+##### Hurdle estimation : are the zeros explained by the same DGP that explains the positive integers ? 
+
+An other problem one could observe is that we have 38% of zeros in our subset. These zeros can be explained by another DGP. For exemple we may think that we have one DGP for the probability to have at least one private school within a city, and another for the number of private school once the model detect you have significant chances to have at least one. 
+
+The Hurdle model handle this concern. Indeed it provides two different DGP :
+
+* The latent model that reflects the probability that the city has a private school : 
+$$
+y_i = 0 \; \text{if} \; f_0(x_i) + \varepsilon_i <0 \Rightarrow \mathbb{P}(y_i =0) = \mathbb{P}( \varepsilon_i < -f_0(x_i)) = F_{\varepsilon}(-f_0(x_i)) 
+$$
+
+* The model that count the number of times 
+$$
+f_1(y_i \mid x_i)
+$$
+
+The likelyhood will have two parts :
+$$
+\mathcal{L} = F_{\varepsilon}(-f_0(x_i))^{\mathbb{1}_{[y_i = 0]}} \left([1 - F_{\varepsilon}(-f_0(x_i))]\cdot \frac{f_1(y_i \mid x_i)}{1 - f_1(0 \mid x_i)} \right)^{\mathbb{1}_{[y_i > 0]}}
+$$
+
+
+
+# Data
+
+# Results 
+
+
 
 ::: {#refs}
 :::

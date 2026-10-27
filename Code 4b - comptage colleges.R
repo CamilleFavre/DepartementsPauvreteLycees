@@ -238,3 +238,21 @@ ame_num <- function(m, data, var, h = 0.01) {
 cat("\n--- AME z_theil / z_moran (tous modèles) ---\n")
 print(rbind(z_theil = sapply(modeles, ame_num, data = d_mod, var = "z_theil"),
             z_moran = sapply(modeles, ame_num, data = d_mod, var = "z_moran")))
+
+
+# =====================================================================
+# SAUVEGARDE : données + modèles pour le document Quarto (lecture < 5 s)
+# =====================================================================
+modeles <- Filter(Negate(is.null), list(Poisson = m_p, NB2 = m_nb,
+                                        Hurdle_NB = m_hnb, ZINB = m_zinb))
+saveRDS(list(
+  d_mod   = d_mod,                    # données de estimation (complete cases)
+  modeles = modeles,                   # Poisson, NB2, Hurdle NB, ZINB
+  formules = formules,
+  ct_nb2  = dispersiontest(m_p, trafo = 2),   # Cameron-Trivedi NB2
+  ct_nb1  = dispersiontest(m_p, trafo = 1),   # variante NB1 (robustesse)
+  tab_stab = tab_stab,                        # stabilité M0->M4
+  tab_freq = tab_freq,                        # fréq. observées vs prédites
+  wald_fe  = wt                               # test joint des FE académie
+), file.path(DOSSIER_OUT, "modeles_comptage.rds"))
+cat("modeles_comptage.rds écrit.\n")
