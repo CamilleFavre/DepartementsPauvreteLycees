@@ -576,7 +576,7 @@ The Cameron--Trivedi test, performed on the Poisson specification with academy f
 
 To adress the issue of surdispersion, we should add a disturbance term to the parameter : $\log \left(\mathbb{E}(y_i \mid x_i)\right) = x_i \theta + \epsilon$, so that the probability is 
 $$
-\mathbb{P}(y_i = k \mid x_i, u_i) = \frac{e^{-\mu_i u_i} (\mu_i u_i)^{y_i}}{y_i !}, \quad \quad \quad u_i = \log(\epsilon)
+\mathbb{P}(y_i = k \mid x_i, u_i) = \frac{e^{-\mu_i u_i} (\mu_i u_i)^{y_i}}{y_i !}, \quad \quad \quad u_i = \exp(\varepsilon_i)
 $$
 In order to get a closed form solution (Greenwood & Yule 1920) proposed to use a Gamma distribution with mean 1 for $u_i$
 $$
@@ -584,15 +584,15 @@ u_i \sim \frac{\alpha^{\alpha}}{\Gamma(\alpha)}e^{-\alpha u_i}u_i^{\alpha-1}
 $$
 In that case, 
 $$
-\mathbb{P}(y_i = k \mid x_i) =  \frac{\Gamma(\alpha + k)}{\Gamma(k + 1)\Gamma(\alpha)}r_i^{k}(1-r_i)^{\alpha-1}, \qquad r_i = \frac{\mu_i}{\mu_i + \alpha}
+\mathbb{P}(y_i = k \mid x_i) =  \frac{\Gamma(\alpha + k)}{\Gamma(k + 1)\Gamma(\alpha)}r_i^{k}(1-r_i)^{\alpha}, \qquad r_i = \frac{\mu_i}{\mu_i + \alpha}
 $$
 This is the PDF of a negative binomial distribution with $\mathbb{E}(y_i\mid x_i) = \mu_i$ and $\mathbb{V}(y_i\mid x_i) = \mu_i( 1 + \frac{\mu_i}{\alpha})$ . 
 
 The Maximum likelyhood estimation will then estimate both $\theta$ and $\alpha$, in order to handle overdispersion. 
 
-##### Hurdle estimation : are the zeros explained by the same DGP that explains the positive integers ? 
+#### Hurdle estimation : A DGP that explains having or not a private school, and another that predict the number of private schools
 
-An other problem one could observe is that we have 38% of zeros in our subset. These zeros can be explained by another DGP. For exemple we may think that we have one DGP for the probability to have at least one private school within a city, and another for the number of private school once the model detect you have significant chances to have at least one. 
+An other problem one could observe is that we have 38% of zeros in our subset. These zeros can be explained by another DGP. For exemple we may think that we have a DGP for the probability to have at least one private school within a city, and another for the number of private school once the model detect you have significant chance to have at least one. 
 
 The Hurdle model handle this concern. Indeed it provides two different DGP :
 
@@ -611,9 +611,98 @@ $$
 \mathcal{L} = F_{\varepsilon}(-f_0(x_i))^{\mathbb{1}_{[y_i = 0]}} \left([1 - F_{\varepsilon}(-f_0(x_i))]\cdot \frac{f_1(y_i \mid x_i)}{1 - f_1(0 \mid x_i)} \right)^{\mathbb{1}_{[y_i > 0]}}
 $$
 
+#### Zero inflated model : Dissosiation of a DGP for the possibility of having a private school and a DGP for estimating the number of private school 
+
+In this model a zero can be explained by two process, it can came from a constraint or a choice. A non-zero is then a proof of the absence of constraint. 
+
+
+The likelyhood will also have two parts :
+$$
+\mathcal{L} = \left(F_{\varepsilon}(-f_0(x_i)) + [1 - F_{\varepsilon}(-f_0(x_i))]f_1(0 \mid x_i) \right) ^{\mathbb{1}_{[y_i = 0]}} \left([1 - F_{\varepsilon}(-f_0(x_i))]\cdot f_1(y_i \mid x_i) \right)^{\mathbb{1}_{[y_i > 0]}}
+$$
+
+## Specification and the fixed effect
+
+### The specifications 
+
+To answer our question, we estimate a sequence of nested specifications for the 
+conditional mean $\mu_i = \exp(x_i'\beta)$:
+
+* (M0) : $\mu_i = \exp\left(\beta_1\, \texttt{z\_theil}_i\right)$
+* (M1) : (M0) $+\ \beta_2 \log(\texttt{pop}_i)$
+* (M2) : (M1) $+\ \beta_3 \log(\texttt{rev}_i) + \beta_4\, \texttt{pauv}_i + \beta_5\, \texttt{pub}_i + \beta_6\, \texttt{dist}_i + \beta_7\, \texttt{priv5km}_i$
+* (M3) : (M2) $+\ \beta_8\, \texttt{z\_moran}_i$
+* (M4) : (M3) $+\ \alpha_a$, academy fixed effects
+
+where $\texttt{z\_theil}$ and $\texttt{z\_moran}$ are the standardized (mean 0,  sd 1) Theil index of income inequality and Moran's I of spatial income segregation,  $\log(\texttt{pop})$ is the log of commune population, and the controls are: the log  of mean income ($\log \texttt{rev}$), the communal poverty rate ($\texttt{pauv}$),  the number of public *collèges* ($\texttt{pub}$), the distance to the nearest public  *collège* ($\texttt{dist}$), and the number of private *collèges* within 5 km in neighbouring communes ($\texttt{priv5km}$).
+
+### An 'académie' fixed effect to reflect regional differences
+
+We can see that depending on the 'académie', both the share of collège students in a private school (@fig-carte-colleges) and the number of private schools itself (@fig-carte-colleges-prives) varies substantially. To address this we can add an 'académie' fixed effect in our model, and use a Wald test to see if we can statistically say that the DGP included these FE.
+
+The Wald test ensure that the fixed effect we add is significant 
+$$
+\begin{align}
+&H_0 : \quad \beta_{Rennes} = \dots = \beta_{Nantes} = 0 \\
+&H_1 : \quad \text{At least one} \; \beta \neq 0
+\end{align}
+$$
+
+::: {.callout-note collapse="true" title="Academy fixed effects (M4 specification)"}
+```{r wald-test, include=FALSE, message=FALSE, warning=FALSE}
+
+# ---- Test de Wald joint : significativité des FE académie (M4) ----
+library(MASS)   # pour ginv()
+
+V_fe    <- vcovCL(modeles$Poisson, cluster = d_mod$academie, type = "HC1")
+beta_fe <- coef(modeles$Poisson)[grepl("^academie", names(coef(modeles$Poisson)))]
+V_sub   <- V_fe[names(beta_fe), names(beta_fe)]
+
+rang <- qr(V_sub)$rank                  # rang effectif de la matrice
+wald_fe <- list(
+  W  = as.numeric(t(beta_fe) %*% ginv(V_sub) %*% beta_fe),
+  df = rang,                            # df ajusté au rang, pas length(beta_fe)
+  p  = pchisq(as.numeric(t(beta_fe) %*% ginv(V_sub) %*% beta_fe),
+              rang, lower.tail = FALSE))
+
+# Coefficients FE individuels (pour la figure)
+fe_ci <- data.frame(
+  academie = gsub("^academie", "", names(beta_fe)),
+  coef     = beta_fe,
+  se       = sqrt(diag(V_fe[names(beta_fe), names(beta_fe)]))
+) %>%
+  mutate(ic_bas = coef - 1.96 * se, ic_haut = coef + 1.96 * se,
+         academie = stringr::str_to_title(academie))
+```
+
+```{r fig-fe-academies, echo=FALSE, message=FALSE, warning=FALSE}
+#| fig-cap: "Academy fixed effects from the Poisson specification (M4), 
+#|   with 95% academy-clustered confidence intervals."
+#| fig-width: 7
+#| fig-height: 5
+
+library(ggplot2)
+
+fe_ci %>%
+  arrange(coef) %>%
+  mutate(academie = factor(academie, levels = academie)) %>%
+  ggplot(aes(coef, academie)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(xmin = ic_bas, xmax = ic_haut)) +
+  labs(x = "Fixed effect (log scale, reference = Amiens)",
+       y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+```
+:::
+
+A Wald test based on the academy-clustered covariance matrix rejects the null  hypothesis of no academy effects ($W = `r round(wald_fe$W, 1)`$,  $\mathrm{df} = `r wald_fe$df`$,  $p `r ifelse(wald_fe$p < 0.001, "< 0.001", paste0("= ", round(wald_fe$p, 3)))`$).  @fig-fe-academies plots the $\beta$ coefficients of the academy fixed effects  in the M4 specification.
 
 
 # Data
+
+
+
 
 # Results 
 
