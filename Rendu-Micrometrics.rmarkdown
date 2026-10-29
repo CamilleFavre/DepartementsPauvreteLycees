@@ -1,0 +1,932 @@
+---
+title: "Collèges privés et inégalités de revenus en France"
+subtitle: "Niveau global ou ségrégation spatiale ?"
+author: "Camille Favre"
+date: "Octobre 2026"
+format:
+  html:
+    include-after-body: script.html
+    embed-resources: true
+    theme: styles.scss
+    toc: true
+    toc-depth: 2
+    toc-title: "Sommaire"
+    number-sections: true
+    code-fold: true
+    code-summary: "Voir le code"
+    lightbox:
+      match: auto
+      effect: zoom
+    fig-responsive: true
+    fontsize: 1.05em
+    citations-hover: true
+    footnotes-hover: true
+    reference-location: margin   # notes de bas de page en marge, très "papier"
+---
+
+
+Micrometrics
+
+# Introduction
+
+In 2025, 21% of French *collège* (lower-secondary) students are enrolled in a private school under contract with the State. This share varies substantially across *académies* (figure @fig-carte-colleges); for example, in the Rennes *académie*, 43% of lower-secondary students are in a private institution, but this share drops to 11% in the Limoges *académie*.
+
+::: {.callout-note collapse="true" title="Share of students passing Brevet (last year of lower-secondary) from a private institution by *académie*"}
+![Share of students passing Brevet (last year of lower-secondary) from a private institution by *académie*](carte_part_prive_colleges.png){#fig-carte-colleges}
+:::
+
+
+We may think that this difference is linked with the social and economic composition of the city. But is it mostly linked with the global level of inequalities, or with spatial segregation? Indeed, spatial segregation may already select students based on parental socio-economic status — a form of selection that private *collèges* offer, decreasing the need for private lower-secondary schools. On the other hand, depending on the intensity of spatial segregation, some streets may be composed only of rich households and others only of poor households, both assigned to the same public school, increasing the demand for private schools. **Which dimension of income inequality matters for the presence of private lower-secondary schools within a city in France: its overall level, or its spatial segregation?**
+
+We use French administrative data on *collèges* (Annuaire de l'éducation, IPS, Valeur ajoutée) matched with income data at the 200m grid-cell level (Filosofi). With Filosofi, we construct indicators such as Theil and Moran indices to capture the level of inequality of each city. We then estimate count models on the number of private schools in each city, including controls and *académie* fixed effects.
+
+Being in a school composed of good students may positively affect your own results: if the behavior of your peers impacts your academic performance, you may have incentives to seek out schools with the best students. This behavior affects both the offer and the demand for private schools. @epple1998 build a theoretical model showing that in the presence of peer effects, private schools discriminate through the tuition price in order to select the best and the richest students (*cream-skimming*). This prediction is well supported empirically (@epple2004).
+
+However, this theoretical paper does not explain the impact of the spatial distribution within a city on the offer of private schools. In the French system, public lower-secondary schools are subject to strict catchment-area assignment; hence, the supply of private schools may significantly change depending on the level of spatial segregation of the catchment area.
+
+
+# Methodology
+
+## Construction of the city indices 
+
+### Filosofi cells 
+
+Filsosofi provides 200m grid-cell level that gives us information on the mean income, the number of persons, the poverty rate, the share of people in a given age group, the share of land-owners, ...
+A city is composed of different cells, each one having at maximum 8 neighbor cells. We can see a city as a network of these cells.
+
+Here we provide an example with Rennes. 
+
+First we can visualize the network of Rennes (@fig-carte-rennes-interactive). We can see some 'cliques' (independant group of only few cells), this is normal when we look at the administrative map of Rennes (@fig-carte-rennes-interactive2) since we do have some few cells 'alone' (but that had neihbooring cells without Rennes).
+In some case we don't have any cell, that's because of the statisticall secret, if there are not enough people in the cell, INSEE does not provide any information. 
+
+
+::: {.callout-note collapse="true" title="Network of Rennes with 200m cells"}
+::: {#fig-carte-rennes-interactive}
+<iframe src="reseau-rennes.html" width="100%" height="720"
+        style="border:0; display:block; background:#0f0e0b;">
+</iframe>
+
+Rennes network of 200 m Filosofi grid cells (285 m neighbourhood). Interactive:
+hover a cell for its characteristics, click to isolate its neighbourhood.
+:::
+:::
+
+::: {.callout-note collapse="true" title="Administrative map of Rennes with 200m cels"}
+```{r fig-carte-rennes-interactive2, message=FALSE, warning=FALSE}
+#  fig-cap: "Atlas 200 m de Rennes : revenus, pauvreté, habitat et établissements"
+library(leaflet); library(sf); library(dplyr)
+library(htmltools); library(stringr)
+
+os_name <- Sys.info()[["sysname"]]
+
+# Attribution des chemins selon l'OS
+if (os_name == "Windows") {
+  dossier_donnees <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics/france_metro/"
+
+} else if (os_name == "Darwin") { # macOS
+  dossier_donnees <- "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics/france_metro/"
+} else {
+  stop("Système d'exploitation non pris en charge.")
+}
+
+gpkg_path <- paste0(dossier_donnees, "carreaux_200m_met.gpkg")
+CODE <- "35238"   # Rennes
+
+# --- Carreaux 200 m de Rennes uniquement (requête SQL = rapide) ---
+carreaux_sf <- st_read(gpkg_path,
+  query = sprintf("SELECT * FROM carreaux_200m_met WHERE lcog_geo LIKE '%s%%'", CODE),
+  quiet = TRUE) %>%
+  st_transform(4326) %>%
+  mutate(
+    taux_pauvrete = ifelse(men > 0, men_pauv / men * 100, NA),
+    part_proprio  = ifelse(men > 0, men_prop / men * 100, NA),
+    revenu_moyen  = ifelse(ind > 0, ind_snv / ind, NA),
+    part_maison   = ifelse(men > 0, men_mais / men * 100, NA)
+  )
+
+# --- Contour de la commune ---
+commune <- tryCatch(
+  st_read(paste0("https://geo.api.gouv.fr/communes/", CODE, "?format=geojson&geometry=contour"), quiet = TRUE),
+  error = function(e) NULL)
+
+# --- Palettes ---
+pal_pauv <- colorNumeric(c("#22c55e", "#fef08a", "#ef4444"), domain = carreaux_sf$taux_pauvrete, na.color = "transparent")
+pal_rev  <- colorNumeric("Purples", domain = carreaux_sf$revenu_moyen, na.color = "transparent")
+pal_pop  <- colorNumeric("Blues",  domain = carreaux_sf$ind, na.color = "transparent")
+pal_prop <- colorNumeric("YlGn",   domain = carreaux_sf$part_proprio, na.color = "transparent")
+
+# --- Carte ---
+m <- leaflet(width = "100%", height = "640px") %>%
+  addProviderTiles(providers$Esri.WorldGrayCanvas) %>%
+  addPolygons(data = carreaux_sf, color = "#cbd5e1", weight = 0.2,
+    fillColor = ~pal_pauv(taux_pauvrete), fillOpacity = 0.7,
+    popup = ~paste0("<b>Carreau 200 m</b><br>Taux de pauvreté : ",
+                    round(taux_pauvrete, 1), "%<br>Ménages pauvres : ",
+                    men_pauv, " / ", men),
+    group = "Taux de pauvreté") %>%
+  addPolygons(data = carreaux_sf, color = "#cbd5e1", weight = 0.2,
+    fillColor = ~pal_rev(revenu_moyen), fillOpacity = 0.7,
+    popup = ~paste0("<b>Carreau 200 m</b><br>Revenu moyen : ",
+                    round(revenu_moyen, 0), " €/uc"),
+    group = "Revenu moyen") %>%
+  addPolygons(data = carreaux_sf, color = "#cbd5e1", weight = 0.2,
+    fillColor = ~pal_pop(ind), fillOpacity = 0.7,
+    popup = ~paste0("<b>Carreau 200 m</b><br>Population : ", ind),
+    group = "Population") %>%
+  addPolygons(data = carreaux_sf, color = "#cbd5e1", weight = 0.2,
+    fillColor = ~pal_prop(part_proprio), fillOpacity = 0.7,
+    popup = ~paste0("<b>Carreau 200 m</b><br>Propriétaires : ",
+                    round(part_proprio, 1), "%"),
+    group = "Part de propriétaires") %>%
+  addPolygons(data = commune, color = "#1e293b", weight = 1.5,
+    fillColor = "transparent", group = "Contour commune") %>%
+  addLayersControl(
+    baseGroups = c("Taux de pauvreté", "Revenu moyen", "Population", "Part de propriétaires"),
+    overlayGroups = c("Contour commune"),
+    options = layersControlOptions(collapsed = FALSE)) %>%
+  setView(lng = -1.678, lat = 48.11, zoom = 12)
+
+m
+```
+:::
+
+### Measuring inequality within cities: Theil, Moran, exposure and polarization indices
+
+To disentangle the *level* of inequality from its *spatial structure* and its *concentration at the extremes*, we build four complementary indicators from the Filosofi income data at the 200m grid-cell level. We illustrate their construction with the real grid of Rennes.
+
+#### Theil index: overall inequality
+
+The Theil index belongs to the family of generalized entropy indices and measures the overall dispersion of income within a city. For a city $c$ composed of $N_c$ grid cells, with mean income $\bar{y}_c$ and income of cell $i$ denoted $y_i$:
+
+$$
+T_c = \sum_{i=1}^{N_c} \omega_i \, r_i \ln r_i,
+\qquad r_i = \frac{y_i}{\sum_{j} \omega_j y_j},
+$$
+
+where $\omega_i$ is the population share of cell $i$ (so that $\sum_i \omega_i = 1$) and $r_i$ its income relative to the city mean. The index is zero when all cells have identical income and increases with dispersion. Its two appealing properties for our purpose are (i) scale invariance — it does not mechanically grow with the average income level of the city — and (ii) exact decomposability:
+
+$$
+T_c = \underbrace{\sum_{g=1}^{G} \omega_g T_g}_{\text{within-group}} + \underbrace{\sum_{g=1}^{G} \omega_g \ln\left(\frac{\bar{y}_g}{\bar{y}_c}\right)}_{\text{between-group}},
+$$
+
+where $g$ indexes groups of cells (e.g. neighborhoods), $\omega_g$ is the population share of group $g$, and $\bar{y}_g$ its mean income.
+
+#### Moran's I: spatial autocorrelation
+
+The Moran statistic measures *spatial autocorrelation*: whether cells with high (resp. low) income are neighbors of cells with high (resp. low) income. Define the row-standardized spatial weights matrix $W = (w_{ij})$, where $w_{ij} = 1$ if cells $i$ and $j$ are within 285 m of each other (the 8 adjacent 200 m cells) and $w_{ij} = 0$ otherwise, row-standardized so that $\sum_j w_{ij} = 1$. With $z_i = y_i - \bar{y}_c$ the deviations from the city mean:
+
+$$
+I_c = \frac{N_c}{S_0} \cdot \frac{\sum_{i=1}^{N_c} \sum_{j=1}^{N_c} w_{ij} \, z_i z_j}{\sum_{i=1}^{N_c} z_i^2},
+\qquad S_0 = \sum_{i=1}^{N_c} \sum_{j=1}^{N_c} w_{ij}.
+$$
+
+The index lies in $[-1, 1]$: $I_c \to 1$ when cells of similar income cluster together (*segregated* city), $I_c \approx 0$ when incomes are spatially random, and $I_c \to -1$ under a checkerboard pattern.
+
+#### Exposure of the rich ($P_{xx}$): spatial segregation of the wealthy
+
+While Moran measures whether *similar* incomes are neighbors, the exposure index of Massey and Denton (1988) measures the probability that a rich household meets rich households in its immediate neighborhood — the relevant quantity for the location of private *collèges*, which recruit from a spatially concentrated, affluent clientele. Define a cell as rich if its income is above the 75th percentile of the city, $y_i \geq Q_{75}(y)$. Let $p_i^R = \omega_i \cdot \mathbb{1}\{y_i \geq Q_{75}(y)\}$ be the rich population of cell $i$, and $P^R = \sum_i p_i^R$ the total rich population. The exposure index is:
+
+$$
+P_{xx,c} = \sum_{i=1}^{N_c} \frac{p_i^R}{P^R} \cdot \frac{\sum_{j \in \mathcal{N}(i) \cup \{i\}} p_j^R}{\sum_{j \in \mathcal{N}(i) \cup \{i\}} \omega_j},
+$$
+
+where $\mathcal{N}(i)$ denotes the neighbors of cell $i$ within 285 m (closed neighborhood, including $i$ itself). $P_{xx,c} \in [0.25, 1]$: the lower bound corresponds to a perfectly mixed city (rich households uniformly spread), the upper bound to a complete ghetto of the rich.
+
+#### Polarization index (Wolfson): concentration at the extremes
+
+The Wolfson (1994) index captures whether the income distribution is *bimodal* — a mass of rich and a mass of poor with a thin middle class — as opposed to unimodal. For city $c$:
+
+$$
+W_c = \frac{ \,\bar{y}_c - \tilde{y}_c\,|}{\sigma_c},
+$$
+
+where $\tilde{y}_c$ is the population-weighted median income and $\sigma_c$ the population-weighted standard deviation. $W_c \approx 0$ for a symmetric distribution (mean = median); it grows as the distribution concentrates at the two tails. A high $W_c$ signals a polarized city where the social structure is split between an elite and a disadvantaged population, with no substantial middle class.
+
+#### The four indices applied to Rennes
+
+```{r setup-rennes, message=FALSE, warning=FALSE}
+#| echo: true
+#| code-fold: true
+# Mêmes données et mêmes paramètres que le Code 2 : carreaux Filosofi
+# 200 m, voisinage intra-communal 285 m, recours kNN pour les isolés.
+library(sf); library(spdep); library(dplyr)
+
+os_name <- Sys.info()[["sysname"]]
+if (os_name == "Windows") {
+  dossier_donnees <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics/france_metro/"
+} else if (os_name == "Darwin") {
+  dossier_donnees <- "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics/france_metro/"
+} else stop("Système d'exploitation non pris en charge.")
+
+gpkg_path <- paste0(dossier_donnees, "carreaux_200m_met.gpkg")
+CODE <- "35238"   # Rennes
+
+rennes <- st_read(gpkg_path,
+  query = sprintf("SELECT * FROM carreaux_200m_met WHERE lcog_geo LIKE '%s%%'", CODE),
+  quiet = TRUE) %>%
+  filter(is.finite(ind) & ind > 0 & is.finite(ind_snv)) %>%
+  mutate(revenu = ind_snv / ind)                       # €/uc par carreau
+```
+
+```{r rennes-theil-moran, message=FALSE, warning=FALSE}
+#| echo: true
+#| code-fold: true
+DIST_VOISIN <- 285; K_KNN <- 4; NSIM <- 499
+set.seed(2025)
+
+# --- Fonctions identiques au Code 2 ---
+weighted_theil <- function(x, w) {
+  ok <- is.finite(x) & is.finite(w) & x > 0 & w > 0
+  x <- x[ok]; w <- w[ok]; w <- w / sum(w)
+  rel <- x / sum(w * x)
+  sum(w * rel * log(rel))
+}
+
+weighted_median <- function(x, w) {
+  ok <- is.finite(x) & is.finite(w) & w > 0
+  x <- x[ok]; w <- w[ok]
+  if (length(x) == 0) return(NA_real_)
+  o <- order(x); x <- x[o]; w <- w[o]
+  cw <- cumsum(w) / sum(w)
+  x[which(cw >= 0.5)[1]]
+}
+
+# --- Voisinage intra-communal (285 m, kNN pour les isolés) ---
+xy <- st_coordinates(st_centroid(st_transform(rennes, 2154)))
+nb <- dnearneigh(xy, d1 = 0, d2 = DIST_VOISIN)
+if (any(card(nb) == 0)) {
+  knnb <- as.list(knn2nb(knearneigh(xy, k = min(K_KNN, nrow(xy) - 1))))
+  nbl  <- as.list(nb)
+  for (j in which(card(nb) == 0)) nbl[[j]] <- knnb[[j]]
+  nb <- structure(nbl, class = "nb", region.id = attr(nb, "region.id"), sym = attr(nb, "sym"))
+}
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+y  <- rennes$revenu
+wt <- rennes$ind
+
+# --- 1. Theil (pondéré par la population, comme au niveau France) ---
+T_rennes    <- weighted_theil(y, wt)
+ybar_rennes <- weighted.mean(y, wt)
+
+# Contribution de chaque carreau au Theil
+rel_i     <- y / sum((wt / sum(wt)) * y)
+contrib_i <- (wt / sum(wt)) * rel_i * log(rel_i)
+
+# --- 2. Moran global (test par permutation) ---
+mi       <- moran.test(y, lw, zero.policy = TRUE, randomisation = TRUE)
+I_rennes <- mi$estimate[1]
+p_rennes <- mi$p.value
+
+# --- 3. Exposition des riches Pxx (Massey & Denton) ---
+seuil_riches <- quantile(y, 0.75, na.rm = TRUE)
+p_riche      <- ifelse(y >= seuil_riches, wt, 0)
+P_R          <- sum(p_riche)
+# part de riches dans le voisinage fermé de chaque carreau
+prop_riche_voisin <- sapply(seq_along(nb), function(i) {
+  voisins <- c(i, nb[[i]])
+  sum(p_riche[voisins]) / sum(wt[voisins])
+})
+# Pxx pondéré par la population riche de chaque carreau
+Pxx_rennes <- sum((p_riche / P_R) * prop_riche_voisin, na.rm = TRUE)
+
+# --- 4. Polarisation (Wolfson) ---
+med_rennes <- weighted_median(y, wt)
+sd_rennes  <- sqrt(sum((wt / sum(wt)) * (y - ybar_rennes)^2))
+W_rennes   <- if (sd_rennes > 0) abs(ybar_rennes - med_rennes) / sd_rennes else NA_real_
+
+# --- Quadrants LISA (typologie exhaustive, sans filtre, comme Code 2) ---
+z  <- as.numeric(scale(y))
+wz <- lag.listw(lw, z, zero.policy = TRUE)
+rennes$quadrant <- ifelse(wz >= 0, ifelse(z >= 0, "HH", "LH"),
+                                ifelse(z >= 0, "HL", "LL"))
+
+# --- Décomposition des contributions au Theil ---
+part_top5 <- sum(sort(contrib_i, decreasing = TRUE)[1:floor(0.05 * length(contrib_i))]) / T_rennes
+part_LL   <- sum(contrib_i[rennes$quadrant == "LL"]) / T_rennes
+
+# --- Orthogonalité : mêmes revenus, positions permutées ---
+set.seed(2025)
+y_perm   <- sample(y)
+T_perm   <- weighted_theil(y_perm, wt)
+I_perm   <- moran.test(y_perm, lw, zero.policy = TRUE)$estimate[1]
+p_riche_perm <- ifelse(y_perm >= seuil_riches, wt, 0)
+Pxx_perm <- sum((p_riche_perm / sum(p_riche_perm)) * prop_riche_voisin, na.rm = TRUE)
+med_perm <- weighted_median(y_perm, wt)
+moy_perm <- weighted.mean(y_perm, wt)
+sd_perm  <- sqrt(sum((wt / sum(wt)) * (y_perm - moy_perm)^2))
+W_perm   <- if (sd_perm > 0) abs(moy_perm - med_perm) / sd_perm else NA_real_
+
+res_rennes <- list(N = nrow(rennes),
+                   ybar = ybar_rennes, T = T_rennes, I = as.numeric(I_rennes),
+                   p = p_rennes, Pxx = Pxx_rennes, W = W_rennes,
+                   part_top5 = part_top5, part_LL = part_LL,
+                   T_perm = T_perm, I_perm = as.numeric(I_perm),
+                   Pxx_perm = Pxx_perm, W_perm = W_perm,
+                   y_max = max(y), y_min = min(y))
+```
+
+The mean disposable income per consumption unit in Rennes is
+`r sprintf("%.0f", res_rennes$ybar)` € across `r res_rennes$N` grid
+cells (incomes range from `r sprintf("%.0f", res_rennes$y_min)` to
+`r sprintf("%.0f", res_rennes$y_max)` €). The four indices of the city are:
+ | Index | Value | Interpretation |
+ |---|---|---|
+ | Theil $T_{\text{Rennes}}$ | `r sprintf("%.4f", res_rennes$T)` | overall income dispersion |
+ | Moran $I_{\text{Rennes}}$ | `r sprintf("%.3f", res_rennes$I)` ($p = `r sprintf("%.3f", res_rennes$p)`$) | spatial clustering of incomes |
+ | Exposure $P_{xx}$ | `r sprintf("%.3f", res_rennes$Pxx)` | spatial segregation of the rich (0.25 = mixed, 1 = ghetto) |
+ | Polarization $W$ | `r sprintf("%.3f", res_rennes$W)` | bimodality of the distribution (0 = symmetric) |
+
+Three facts summarize the division of labor between the indices:
+
+1. **Theil aggregates, the others locate or shape.** The 5% most unequal-contributing cells account for `r 100 * round(res_rennes$part_top5, 2)`% of the Theil index, but the Theil is blind to *where* they are. Moran, $P_{xx}$ and $W$ are the ones that detect structure: Moran tells us that rich cells (Thabor, the city center) and poor cells (Le Blosne, Villejean) each stand next to similar cells — figure @fig-moran-scatter shows this in a single scatter, the slope of the fitted line *is* the Moran statistic. $P_{xx}$ specifically quantifies whether the *rich* are clustered together, which defines the catchment area of a private *collège*. $W$ captures whether the city is bimodal (an elite and a poor population with no middle class) rather than unimodal.
+
+2. **The indices are orthogonal by construction.** Permuting the incomes across the cells of Rennes leaves the distribution — hence the Theil index — strictly unchanged ($T = `r sprintf("%.4f", res_rennes$T_perm)`$, identical to $`r sprintf("%.4f", res_rennes$T)`$), while the Moran statistic collapses to $I = `r sprintf("%.3f", res_rennes$I_perm)`$ and the exposure of the rich drops to $P_{xx} = `r sprintf("%.3f", res_rennes$Pxx_perm)`$: without spatial structure, there is no autocorrelation and no clustering of the rich left. The polarization $W$ is almost unchanged ($`r sprintf("%.3f", res_rennes$W_perm)`$), because it depends only on the shape of the distribution, not on its geography.
+
+3. **In the count model of private *collèges*, each coefficient captures a distinct mechanism.** The coefficient on $T_c$ captures the demand driven by the overall dispersion of income; the coefficient on $I_c$ captures the additional effect of the spatial clustering of rich and poor households within the same catchment areas; the coefficient on $P_{xx,c}$ captures the effect of the spatial concentration of the affluent clientele that private schools target; and the coefficient on $W_c$ captures the effect of polarization — whether the city offers a large homogeneous middle-class market or a split elite/poor structure.
+
+::: {.callout-note collapse="true" title="Moran scatterplot of Rennes: each cell's income against its neighbors'"}
+```{r fig-moran-scatter, message=FALSE, warning=FALSE}
+#| echo: false
+#| fig-cap: "Moran scatterplot of Rennes. Each point is a 200 m cell: x-axis its standardized income, y-axis the average standardized income of its neighbors. The slope of the line is the Moran statistic; quadrants HH (top right) and LL (bottom left) are the clusters."
+#| fig-width: 7
+#| fig-height: 5.5
+library(ggplot2)
+
+df_scatter <- data.frame(z = z, wz = wz, quadrant = rennes$quadrant)
+
+pal_quad <- c("HH" = "#2c7fb8", "LL" = "#b2182b", "HL" = "#8c8c8c", "LH" = "#8c8c8c")
+
+ggplot(df_scatter, aes(x = z, y = wz, color = quadrant)) +
+  geom_hline(yintercept = 0, color = "grey55", linewidth = 0.3) +
+  geom_vline(xintercept = 0, color = "grey55", linewidth = 0.3) +
+  geom_point(alpha = 0.55, size = 1.6) +
+  geom_smooth(aes(color = NULL), method = "lm", se = FALSE,
+              color = "#B4562A", linewidth = 0.8) +
+  annotate("text", x = max(z) * 0.55, y = max(wz) * 0.9, label = "HH\nrich cluster",
+          color = "#2c7fb8", fontface = "bold", size = 3.4) +
+  annotate("text", x = min(z) * 0.55, y = min(wz) * 0.9, label = "LL\npoor cluster",
+          color = "#b2182b", fontface = "bold", size = 3.4) +
+  annotate("text", x = max(z) * 0.6, y = min(wz) * 0.8, label = "HL", color = "grey40", size = 3.4) +
+  annotate("text", x = min(z) * 0.6, y = max(wz) * 0.8, label = "LH", color = "grey40", size = 3.4) +
+  annotate("text", x = -max(abs(z)) * 0.75, y = max(wz) * 0.55,
+          label = paste0("slope = Moran I = ", sprintf("%.3f", res_rennes$I),
+                         "\nPxx = ", sprintf("%.3f", res_rennes$Pxx),
+                         "\nW = ", sprintf("%.3f", res_rennes$W)),
+          color = "#B4562A", fontface = "bold", size = 3.8, hjust = 0) +
+  scale_color_manual(values = pal_quad, guide = "none") +
+  labs(x = expression("Standardized cell income" ~ z[i]),
+       y = expression("Average standardized income of neighbors" ~ sum(j, w[ij] * z[j]))) +
+  coord_cartesian(xlim = range(df_scatter$z) * 1.05, ylim = range(df_scatter$wz) * 1.05) +
+  theme_classic(base_size = 12)
+```
+:::
+
+::: {.callout-note collapse="true" title="LISA typology of Rennes: where the clusters are"}
+```{r fig-lisa-rennes, message=FALSE, warning=FALSE}
+#| echo: false
+# Leaflet : typologie exhaustive des carreaux (comme Code 2, sans filtre
+# de significativite). Cliquer un carreau pour voir ses vraies valeurs.
+library(leaflet); library(htmltools)
+
+carte <- rennes %>% st_transform(4326)
+
+pal_quad <- colorFactor(
+  palette = c("HH" = "#2c7fb8", "LL" = "#b2182b",
+              "HL" = "#8c8c8c", "LH" = "#8c8c8c"),
+  domain = c("HH", "LL", "HL", "LH"))
+
+leaf <- leaflet(width = "100%", height = "600px") %>%
+  addProviderTiles(providers$Esri.WorldGrayCanvas) %>%
+  addPolygons(data = carte,
+    color = "#cbd5e1", weight = 0.2,
+    fillColor = ~pal_quad(quadrant), fillOpacity = 0.75,
+    popup = ~paste0(
+      "<b>Carreau 200 m</b><br>",
+      "Revenu moyen : ", sprintf("%.0f", revenu), " €/uc<br>",
+      "Population : ", ind, "<br>",
+      "z<sub>i</sub> : ", sprintf("%.2f", z), " | Moran local : ",
+      sprintf("%.2f", wz), "<br>",
+      "Quadrant : <b>", quadrant, "</b>")) %>%
+  addLegend(position = "bottomright",
+    colors = c("#2c7fb8", "#b2182b", "#8c8c8c", "#8c8c8c"),
+    labels = c("HH : riche au milieu de riches",
+               "LL : pauvre au milieu de pauvres",
+               "HL : riche isolé", "LH : pauvre isolé"),
+    title = "Typologie LISA (exhaustive)") %>%
+  setView(lng = -1.678, lat = 48.11, zoom = 12)
+
+leaf
+```
+:::
+
+
+
+### Visual comparison of the four segregation indices on Rennes
+
+The four indices answer four different questions about the same 200 m grid. We compute all four on the real Filosofi grid of Rennes (`lcog_geo LIKE '35238%'`) and map them side by side.
+
+```{r setup-visu-seg, message=FALSE, warning=FALSE}
+#  echo: false
+library(sf); library(spdep); library(dplyr); library(ggplot2); library(patchwork)
+
+os_name <- Sys.info()[["sysname"]]
+dossier_donnees <- if (os_name == "Windows")
+  "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics/france_metro/" else
+  "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics/france_metro/"
+set.seed(2025)
+
+rennes <- st_read(paste0(dossier_donnees, "carreaux_200m_met.gpkg"),
+  query = "SELECT * FROM carreaux_200m_met WHERE lcog_geo LIKE '35238%'", quiet = TRUE) %>%
+  filter(is.finite(ind) & ind > 0 & is.finite(ind_snv)) %>%
+  mutate(revenu = ind_snv / ind) %>%
+  st_transform(2154)
+
+DIST_VOISIN <- 285; K_KNN <- 4
+xy <- st_coordinates(st_centroid(rennes))
+nb <- dnearneigh(xy, d1 = 0, d2 = DIST_VOISIN)
+if (any(card(nb) == 0)) {
+  knnb <- as.list(knn2nb(knearneigh(xy, k = min(K_KNN, nrow(xy) - 1))))
+  nbl  <- as.list(nb)
+  for (j in which(card(nb) == 0)) nbl[[j]] <- knnb[[j]]
+  nb <- structure(nbl, class = "nb", region.id = attr(nb, "region.id"), sym = attr(nb, "sym"))
+}
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+y  <- rennes$revenu; wt <- rennes$ind; wn <- wt / sum(wt)
+z  <- as.numeric(scale(y)); wz <- lag.listw(lw, z, zero.policy = TRUE)
+
+# --- Theil + contributions ---
+weighted_theil <- function(x, w) { ok <- is.finite(x)&is.finite(w)&x>0&w>0; x<-x[ok]; w<-w[ok]; w<-w/sum(w); r<-x/sum(w*x); sum(w*r*log(r)) }
+T_rennes <- weighted_theil(y, wt)
+rel_i <- y / sum(wn * y)
+rennes$contrib_theil <- wn * rel_i * log(rel_i)
+
+# --- Moran + LISA ---
+mi <- moran.test(y, lw, zero.policy = TRUE, randomisation = TRUE)
+I_rennes <- as.numeric(mi$estimate[1]); p_rennes <- mi$p.value
+rennes$quadrant <- ifelse(wz >= 0, ifelse(z >= 0, "HH", "LH"), ifelse(z >= 0, "HL", "LL"))
+
+# --- Exposition Pxx ---
+weighted_median <- function(x, w) { ok <- is.finite(x)&is.finite(w)&w>0; x<-x[ok]; w<-w[ok]; o<-order(x); x<-x[o]; w<-w[o]; cw<-cumsum(w)/sum(w); x[which(cw>=0.5)[1]] }
+seuil <- quantile(y, 0.75, na.rm = TRUE)
+p_riche <- ifelse(y >= seuil, wt, 0)
+prop_voisin <- sapply(seq_along(nb), function(i) { v <- c(i, nb[[i]]); sum(p_riche[v]) / sum(wt[v]) })
+rennes$prop_riche_voisin <- prop_voisin
+Pxx_rennes <- sum((p_riche / sum(p_riche)) * prop_voisin, na.rm = TRUE)
+rennes$est_riche <- y >= seuil
+
+# --- Polarisation Wolfson ---
+med <- weighted_median(y, wt); moy <- weighted.mean(y, wt)
+sd_w <- sqrt(sum(wn * (y - moy)^2))
+W_rennes <- abs(moy - med) / sd_w
+```
+
+```{r fig-theil, message=FALSE, warning=FALSE}
+#| echo: false
+#| fig-cap: "Theil index: contribution of each 200 m cell to total inequality. Dark red cells contribute most; the index sums all contributions (T = `r sprintf('%.4f', T_rennes)`)."
+#| fig-width: 10
+#| fig-height: 4.5
+
+p1 <- ggplot(rennes) +
+  geom_sf(aes(fill = contrib_theil), color = NA) +
+  scale_fill_gradient(low = "#fee8c8", high = "#b2182b", trans = "sqrt",
+                      name = "Contribution\nto Theil") +
+  labs(title = "Map: contribution of each cell to the Theil index") +
+  theme_void(base_size = 10) + theme(legend.position = "right")
+
+top_n <- rennes %>%
+  arrange(desc(contrib_theil)) %>%
+  slice_head(n = 20) %>%
+  mutate(rang = row_number())
+
+p2 <- ggplot(top_n, aes(x = reorder(rang, contrib_theil), y = contrib_theil)) +
+  geom_col(fill = "#b2182b") +
+  labs(title = "Top 20 most unequal cells", x = "Cell (ranked)", y = "Contribution") +
+  theme_minimal(base_size = 10)
+
+p1 + p2
+```
+
+```{r fig-moran, message=FALSE, warning=FALSE}
+#| echo: false
+#| fig-cap: "Moran's I: left — scatterplot (slope = I = `r sprintf('%.3f', I_rennes)`, p = `r sprintf('%.3f', p_rennes)`); right — LISA quadrants map (HH = rich cluster, LL = poor cluster)."
+#| fig-width: 10
+#| fig-height: 4.5
+
+pal <- c("HH" = "#2c7fb8", "LL" = "#b2182b", "HL" = "#8c8c8c", "LH" = "#8c8c8c")
+
+p1 <- ggplot(data.frame(z = z, wz = wz, q = rennes$quadrant), aes(z, wz, color = q)) +
+  geom_hline(yintercept = 0, color = "grey60", linewidth = 0.3) +
+  geom_vline(xintercept = 0, color = "grey60", linewidth = 0.3) +
+  geom_point(alpha = 0.6, size = 1.4) +
+  geom_smooth(aes(color = NULL), method = "lm", se = FALSE, color = "#B4562A") +
+  scale_color_manual(values = pal, guide = "none") +
+  annotate("text", x = max(z)*0.5, y = max(wz)*0.9, label = "HH", color = "#2c7fb8", fontface = "bold") +
+  annotate("text", x = min(z)*0.5, y = min(wz)*0.9, label = "LL", color = "#b2182b", fontface = "bold") +
+  labs(title = paste0("Moran scatterplot (I = ", sprintf("%.3f", I_rennes), ")"),
+       x = expression(z[i]), y = expression(sum(j, w[ij]*z[j]))) +
+  theme_classic(base_size = 10)
+
+p2 <- ggplot(rennes) +
+  geom_sf(aes(fill = quadrant), color = NA) +
+  scale_fill_manual(values = pal, name = "LISA quadrant",
+                    labels = c("HH rich cluster", "LL poor cluster", "HL/LH outlier")) +
+  labs(title = "LISA typology map") +
+  theme_void(base_size = 10) + theme(legend.position = "right")
+
+p1 + p2
+```
+
+```{r fig-pxx, message=FALSE, warning=FALSE}
+#| echo: false
+#| fig-cap: "Exposure of the rich (Pxx = `r sprintf('%.3f', Pxx_rennes)`): left — rich cells (income > P75) in dark blue; right — share of rich households in each cell's closed neighborhood. Pxx is the population-weighted average of the right map over rich cells."
+#| fig-width: 10
+#| fig-height: 4.5
+
+p1 <- ggplot(rennes) +
+  geom_sf(aes(fill = est_riche), color = NA) +
+  scale_fill_manual(values = c("FALSE" = "#d9d9d9", "TRUE" = "#08306b"),
+                    labels = c("Not rich", "Rich (y > P75)"), name = NULL) +
+  labs(title = "Rich cells (top 25% income)") +
+  theme_void(base_size = 10) + theme(legend.position = "bottom")
+
+p2 <- ggplot(rennes) +
+  geom_sf(aes(fill = prop_riche_voisin), color = NA) +
+  scale_fill_gradient(low = "#f7f7f7", high = "#08306b",
+                      limits = c(0, 1), name = "Share of rich\nin neighborhood") +
+  labs(title = "Local exposure to rich neighbors") +
+  theme_void(base_size = 10) + theme(legend.position = "bottom")
+
+p1 + p2
+```
+
+```{r fig-polarisation, message=FALSE, warning=FALSE}
+#| echo: false
+#| fig-cap: "Polarization (Wolfson W = `r sprintf('%.3f', W_rennes)`): density of cell incomes. A high W means the distribution is pushed to the tails (mean and median diverge). Here mean (`r sprintf('%.0f', moy)` €) > median (`r sprintf('%.0f', med)` €), signaling a right-skewed, polarized distribution."
+#| fig-width: 7
+#| fig-height: 4
+
+ggplot(rennes, aes(x = revenu)) +
+  geom_density(fill = "#9ecae1", color = "#3182bd", alpha = 0.7) +
+  geom_vline(aes(xintercept = moy, color = "Mean"), linetype = "dashed", linewidth = 1) +
+  geom_vline(aes(xintercept = med, color = "Median"), linetype = "solid", linewidth = 1) +
+  geom_vline(aes(xintercept = seuil, color = "P75 (rich threshold)"), linetype = "dotted", linewidth = 1) +
+  scale_color_manual(values = c("Mean" = "#b2182b", "Median" = "#2c7fb8", "P75 (rich threshold)" = "#08306b")) +
+  labs(x = "Cell mean income (€/uc)", y = "Density", color = NULL,
+       title = paste0("Income distribution of Rennes cells — Wolfson W = ", sprintf("%.3f", W_rennes))) +
+  theme_classic(base_size = 11)
+```
+
+```{r tbl-recap-indices, echo=FALSE}
+#| tbl-cap: "The four segregation indices computed on the Rennes grid (N cells, population-weighted)."
+
+tibble::tibble(
+  Index = c("Theil T", "Moran I", "Exposure Pxx", "Polarization W"),
+  Value = c(sprintf("%.4f", T_rennes), sprintf("%.3f (p=%.3f)", I_rennes, p_rennes),
+            sprintf("%.3f", Pxx_rennes), sprintf("%.3f", W_rennes)),
+  Range = c("[0, +∞)", "[-1, 1]", "[0.25, 1]", "[0, +∞)"),
+  `What it captures` = c("Overall income dispersion",
+                         "Spatial clustering of similar incomes",
+                         "Spatial concentration of the rich (P75+)",
+                         "Bimodality / concentration at the tails"),
+  `Role in the model` = c("Demand driven by inequality level",
+                          "Segregation within catchment areas",
+                          "Affluent market base for private collèges",
+                          "Absence of middle class / elite-poor split")
+) %>%
+  knitr::kable(format = "pipe", align = "lcll")
+```
+
+
+## Count data estimation
+
+To answer this economic question we use count data model. Indeed, the dependent variable is the number of private lower secondary school within a city. This positive integer describe an intensity, justifying a count data model. 
+
+Figures @fig-carte-colleges-prives and @fig-carte-colleges-publics map the number of private and public *collèges* per commune, computed from the Annuaire de l'Éducation and aggregated at the commune level.
+
+::: {.callout-note collapse="true" title="Number of collège per commune"}
+::: {.column-screen}
+::: {layout-ncol="2" layout-valign="top"}
+![Number of private collèges per commune](carte_colleges_prives.png){#fig-carte-colleges-prives}
+
+![Number of public collèges per commune](carte_colleges_publics.png){#fig-carte-colleges-publics}
+:::
+:::
+::: 
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+library(arrow); library(dplyr); library(ggplot2); library(kableExtra)
+
+# --- Chemins : identiques au Code 4b ---
+os_name <- Sys.info()[["sysname"]]
+if (os_name == "Windows") {
+  DOSSIER_OUT <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+} else if (os_name == "Darwin") {
+  DOSSIER_OUT <- "/Users/camillefavre/DepartementsPauvreteLycees"
+} else stop("Système non pris en charge.")
+
+# --- Vraies données : une ligne = une commune ---
+d <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
+
+moy   <- mean(d$nb_colleges_prives, na.rm = TRUE)
+var_y <- var(d$nb_colleges_prives, na.rm = TRUE)
+
+# --- Fréquence du nombre de collèges privés par commune ---
+freq <- d %>%
+  filter(!is.na(nb_colleges_prives)) %>%
+  count(n = nb_colleges_prives, name = "nb_communes") %>%
+  mutate(Share = 100 * nb_communes / sum(nb_communes))
+```
+
+```{r tbl-distrib, message=FALSE}
+freq %>%
+  mutate(Sum = cumsum(Share)) %>%
+  knitr::kable(
+    digits = 1,
+    col.names = c("Private lower secondary schools", "Communes", "Share (%)", "Cumulative (%)")
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+### The choice of the count model
+
+#### Poisson model : a bad idea regarding our data ?
+
+The mean of this distribution is `r sprintf("%.2f", moy)` and the variance is `r sprintf("%.2f", var_y)` (figure @fig-distrib-colleges). We can seee that we clearly have overdispersion, hence, using a Poisson model would be innapropriate here.  
+
+::: {.callout-note collapse="true" title="Distribution of private lower secondary schools per city"}
+```{r fig-distrib-colleges, fig.cap="Distribution of the number of private lower secondary schools per city", fig.width=7.5, fig.height=4.8, message=FALSE, warning=FALSE}
+moy <- mean(d$nb_colleges_prives, na.rm = TRUE)
+var_y <- var(d$nb_colleges_prives, na.rm = TRUE)
+ratio <- var_y / moy
+n0  <- sum(d$nb_colleges_prives == 0, na.rm = TRUE)
+
+distrib <- d %>%
+  filter(!is.na(nb_colleges_prives)) %>%
+  count(n = nb_colleges_prives, name = "nb_communes") %>%
+  mutate(n = pmin(n, 5)) %>%
+  group_by(n) %>%
+  summarise(nb_communes = sum(nb_communes), .groups = "drop")
+
+y_max <- max(distrib$nb_communes)
+
+p <- ggplot(distrib, aes(x = n, y = nb_communes)) +
+  geom_col(fill = "#2c7fb8", width = 0.68) +
+  # --- moyenne (ligne pointillée) ---
+  geom_vline(xintercept = moy, linetype = "dashed",
+             color = "#B4562A", linewidth = 0.55) +
+  annotate("text", x = moy + 0.12, y = y_max * 0.97,
+           label = sprintf("Mean = %.2f", moy),
+           color = "#B4562A", hjust = 0, size = 3.6, fontface = "bold") +
+  # --- boîte variance / surdispersion (haut droit) ---
+  annotate("text", x = 4.95, y = y_max * 0.97, hjust = 1,
+           label = sprintf("Variance = %.2f\nVar / Mean = %.2f\n(overdispersion)",
+                           var_y, ratio),
+           color = "#1a1a2e", hjust = 1, size = 3.5, lineheight = 1.1,
+           fontface = "bold") +
+  scale_x_continuous(breaks = 0:5,
+                     labels = c("0","1","2","3","4","5+"),
+                     expand = expansion(mult = c(0, 0.05))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) +
+  labs(x = "Number of private lower secondary schools per city",
+       y = "Number of cities",
+       subtitle = sprintf("N = %s cities · %.1f%% of cities have none",
+                          scales::comma(nrow(d)), 100 * n0 / nrow(d))) +
+  theme_classic(base_size = 13) +
+  theme(
+    axis.text          = element_text(color = "black", size = 11),
+    axis.title         = element_text(color = "black", size = 12),
+    plot.subtitle      = element_text(color = "grey30", size = 11),
+    panel.grid.major.y = element_line(color = "grey88", linewidth = 0.3),
+    axis.line          = element_line(color = "black", linewidth = 0.4)
+  )
+
+p
+```
+:::
+
+Indeed in a poisson distribution we have : 
+$$
+y_i \mid x_i \sim \text{Poisson}(\mu_i), \qquad \mu_i = \mathbb{E}(y_i \mid x_i) = \mathbb{V}(y_i \mid x_i)
+$$
+
+#### Testing for overdispersion 
+
+In our data, however, $\widehat{\mathbb{E}}(y_i \mid x_i) < \widehat{\mathbb{V}}(y_i \mid x_i)$: the variance is 4.82 for a mean of 1.38, revealing a potential overdispersion.
+To test this overdispersion we will use a Cameron-Triverdi (1990) test :
+$$
+\begin{aligned}
+H_0 &: \quad \mathbb{V}(y_i \mid x_i) = \mu_i \\
+H_1 &: \quad \mathbb{V}(y_i \mid x_i) = \mu_i + \alpha\, g(\mu_i)
+\end{aligned}
+$$
+Since the Poisson MLE remains consistent for the conditional mean even under variance misspecification (Gouriéroux, Monfort and Trognon, 1984), $\hat \mu_i$ can be treated as a proxy for$\mu_i$, Cameron-Triverdi (1990)  propose a t-test of $\alpha = 0$ in the following OLS regression
+$$
+(y_i-\hat\mu_i)^2 - y_i = \alpha \cdot g(\hat \mu_i) + \varepsilon_i
+$$
+That's because, under $H_0$, if we take expectations :
+$$
+\begin{aligned}
+\mathbb{E}\left((y_i-\hat\mu_i)^2 - y_i\right) &= \mathbb{E}\left(\alpha \cdot g(\hat \mu_i) + \varepsilon_i\right) \\
+\mathbb{E}\left((y_i-\hat\mu_i)^2 \right) - \mathbb{E}\left(y_i\right) &= \alpha\cdot \mathbb{E}\left( g(\hat \mu_i) \right) \\
+\mu_i - \mu_i &= \alpha \cdot \mathbb{E}\left( g(\hat \mu_i) \right) 
+\end{aligned}
+$$
+And under $H_1$ :
+$$
+\begin{aligned}
+\mathbb{E}\left((y_i-\hat\mu_i)^2 - y_i\right) &= \mathbb{V}(y_i \mid x_i) - \mu_i \\
+\mathbb{E}\left((y_i-\hat\mu_i)^2 - y_i\right) &=  \mu_i + \alpha\, g(\mu_i)- \mu_i 
+\end{aligned}
+$$
+We can test with $g(.)$ being the square or identity function, in order to test for the negative binomial distribution that we introduce just after. 
+
+Our test is then a t-test of $\alpha =0$ in the following OLS estimation (here for $g(x) = x^2$)
+$$
+(y_i-\hat\mu_i)^2 - y_i = \alpha \cdot \hat \mu_i^2 + \varepsilon_i
+$$
+```{r setup-comptage, include=FALSE, message=FALSE, warning=FALSE}
+# Chunk setup-comptage — données et modèles viennent du cache
+library(dplyr); library(knitr); library(kableExtra)
+library(sandwich); library(lmtest); library(AER)
+
+os_name <- Sys.info()[["sysname"]]
+DOSSIER_OUT <- if (os_name == "Windows")
+  "C:/Users/camil/Documents/DepartementsPauvreteLycees" else
+  "/Users/camillefavre/DepartementsPauvreteLycees"
+
+charg <- readRDS(file.path(DOSSIER_OUT, "modeles_comptage.rds"))
+list2env(charg, envir = globalenv())
+
+m_p <- modeles$Poisson; m_nb <- modeles$NB2
+
+# Tests de Cameron-Trivedi recalculés depuis m_p (le RDS ne contient que ct_nb2)
+ct_nb1 <- dispersiontest(m_p, trafo = 1)
+ct_nb2 <- dispersiontest(m_p, trafo = 2)
+
+# Descriptives de la variable dépendante, sur l'échantillon d'estimation
+stats_y <- data.frame(
+  moyenne   = mean(d_mod$y),
+  variance  = var(d_mod$y),
+  part_zeros = mean(d_mod$y == 0))
+
+# Alpha de la régression auxiliaire : (y-mu)^2 - y = alpha * g(mu), sans constante
+alpha_aux <- function(m, trafo) {
+  y  <- model.response(model.frame(m))
+  mu <- fitted(m)
+  g  <- if (trafo == 1) mu else mu^2
+  d  <- (y - mu)^2 - y
+  unname(coef(lm(d ~ 0 + g))[1])   # ~ 0 + : pas de constante, comme dans le texte
+}
+```
+
+```{r tbl-cameron-trivedi, echo=FALSE, message=FALSE}
+#| tbl-cap: "Cameron--Trivedi overdispersion test on the Poisson model (M4)"
+
+tibble::tribble(
+  ~`Alternative variance`,  ~`$\\hat\\alpha$ (dispersion)`, ~`$z$ statistic`, ~`$p$-value`,
+  "$\\mu + \\alpha \\mu$",   alpha_aux(m_p, 1),           ct_nb1$statistic, ct_nb1$p.value,
+  "$\\mu + \\alpha \\mu^2$", alpha_aux(m_p, 2),           ct_nb2$statistic, ct_nb2$p.value
+) %>%
+  mutate(`$p$-value` = ifelse(`$p$-value` < 1e-4,
+                             "< 0.0001", format.pval(`$p$-value`, digits = 3))) %>%
+  knitr::kable(format = "pipe", digits = 3, align = "lccc")
+```
+
+The Cameron--Trivedi test, performed on the Poisson specification with academy fixed effects, strongly rejects equidispersion against the NB2 alternative ($z = `r round(ct_nb2$statistic, 2)`$, $p `r ifelse(ct_nb2$p.value < 0.001, "< 0.001", paste0("= ", round(ct_nb2$p.value, 3)))`$). Excess dispersion is therefore a first-order feature of the data, and a single-equation Poisson model would understate the standard errors of the inequality coefficients.
+
+#### Adressing the issue of overdispersion : The Negative Binomial model
+
+To adress the issue of surdispersion, we should add a disturbance term to the parameter : $\log \left(\mathbb{E}(y_i \mid x_i)\right) = x_i \theta + \epsilon$, so that the probability is 
+$$
+\mathbb{P}(y_i = k \mid x_i, u_i) = \frac{e^{-\mu_i u_i} (\mu_i u_i)^{y_i}}{y_i !}, \quad \quad \quad u_i = \exp(\varepsilon_i)
+$$
+In order to get a closed form solution (Greenwood & Yule 1920) proposed to use a Gamma distribution with mean 1 for $u_i$
+$$
+u_i \sim \frac{\alpha^{\alpha}}{\Gamma(\alpha)}e^{-\alpha u_i}u_i^{\alpha-1}
+$$
+In that case, 
+$$
+\mathbb{P}(y_i = k \mid x_i) =  \frac{\Gamma(\alpha + k)}{\Gamma(k + 1)\Gamma(\alpha)}r_i^{k}(1-r_i)^{\alpha}, \qquad r_i = \frac{\mu_i}{\mu_i + \alpha}
+$$
+This is the PDF of a negative binomial distribution with $\mathbb{E}(y_i\mid x_i) = \mu_i$ and $\mathbb{V}(y_i\mid x_i) = \mu_i( 1 + \frac{\mu_i}{\alpha})$ . 
+
+The Maximum likelyhood estimation will then estimate both $\theta$ and $\alpha$, in order to handle overdispersion. 
+
+#### Hurdle estimation : A DGP that explains having or not a private school, and another that predict the number of private schools
+
+An other problem one could observe is that we have 38% of zeros in our subset. These zeros can be explained by another DGP. For exemple we may think that we have a DGP for the probability to have at least one private school within a city, and another for the number of private school once the model detect you have significant chance to have at least one. 
+
+The Hurdle model handle this concern. Indeed it provides two different DGP :
+
+* The latent model that reflects the probability that the city has a private school : 
+$$
+y_i = 0 \; \text{if} \; f_0(x_i) + \varepsilon_i <0 \Rightarrow \mathbb{P}(y_i =0) = \mathbb{P}( \varepsilon_i < -f_0(x_i)) = F_{\varepsilon}(-f_0(x_i)) 
+$$
+
+* The model that count the number of times 
+$$
+f_1(y_i \mid x_i)
+$$
+
+The likelyhood will have two parts :
+$$
+\mathcal{L} = F_{\varepsilon}(-f_0(x_i))^{\mathbb{1}_{[y_i = 0]}} \left([1 - F_{\varepsilon}(-f_0(x_i))]\cdot \frac{f_1(y_i \mid x_i)}{1 - f_1(0 \mid x_i)} \right)^{\mathbb{1}_{[y_i > 0]}}
+$$
+
+#### Zero inflated model : Dissosiation of a DGP for the possibility of having a private school and a DGP for estimating the number of private school 
+
+In this model a zero can be explained by two process, it can came from a constraint or a choice. A non-zero is then a proof of the absence of constraint. 
+
+
+The likelyhood will also have two parts :
+$$
+\mathcal{L} = \left(F_{\varepsilon}(-f_0(x_i)) + [1 - F_{\varepsilon}(-f_0(x_i))]f_1(0 \mid x_i) \right) ^{\mathbb{1}_{[y_i = 0]}} \left([1 - F_{\varepsilon}(-f_0(x_i))]\cdot f_1(y_i \mid x_i) \right)^{\mathbb{1}_{[y_i > 0]}}
+$$
+
+## Specification and the fixed effect
+
+### The specifications 
+
+To answer our question, we estimate a sequence of nested specifications for the 
+conditional mean $\mu_i = \exp(x_i'\beta)$:
+
+* (M0) : $\mu_i = \exp\left(\beta_1\, \texttt{z\_theil}_i\right)$
+* (M1) : (M0) $+\ \beta_2 \log(\texttt{pop}_i)$
+* (M2) : (M1) $+\ \beta_3 \log(\texttt{rev}_i) + \beta_4\, \texttt{pauv}_i + \beta_5\, \texttt{pub}_i + \beta_6\, \texttt{dist}_i + \beta_7\, \texttt{priv5km}_i$
+* (M3) : (M2) $+\ \beta_8\, \texttt{z\_moran}_i$
+* (M4) : (M3) $+\ \alpha_a$, academy fixed effects
+
+where $\texttt{z\_theil}$ and $\texttt{z\_moran}$ are the standardized (mean 0,  sd 1) Theil index of income inequality and Moran's I of spatial income segregation,  $\log(\texttt{pop})$ is the log of commune population, and the controls are: the log  of mean income ($\log \texttt{rev}$), the communal poverty rate ($\texttt{pauv}$),  the number of public *collèges* ($\texttt{pub}$), the distance to the nearest public  *collège* ($\texttt{dist}$), and the number of private *collèges* within 5 km in neighbouring communes ($\texttt{priv5km}$).
+
+### An 'académie' fixed effect to reflect regional differences
+
+We can see that depending on the 'académie', both the share of collège students in a private school (@fig-carte-colleges) and the number of private schools itself (@fig-carte-colleges-prives) varies substantially. To address this we can add an 'académie' fixed effect in our model, and use a Wald test to see if we can statistically say that the DGP included these FE.
+
+The Wald test ensure that the fixed effect we add is significant 
+$$
+\begin{align}
+&H_0 : \quad \beta_{Rennes} = \dots = \beta_{Nantes} = 0 \\
+&H_1 : \quad \text{At least one} \; \beta \neq 0
+\end{align}
+$$
+
+::: {.callout-note collapse="true" title="Academy fixed effects (M4 specification)"}
+```{r wald-test, include=FALSE, message=FALSE, warning=FALSE}
+
+# ---- Test de Wald joint + figure : FE région académique (M4) ----
+library(MASS); library(ggplot2); library(dplyr); library(stringr)
+
+V_fe    <- vcovCL(modeles$Poisson, cluster = d_mod$region_acad, type = "HC1")
+beta_fe <- coef(modeles$Poisson)[grepl("^region_acad", names(coef(modeles$Poisson)))]
+V_sub   <- V_fe[names(beta_fe), names(beta_fe)]
+
+rang  <- qr(V_sub)$rank
+W_val <- as.numeric(t(beta_fe) %*% ginv(V_sub) %*% beta_fe)
+wald_fe <- list(W = W_val, df = rang, p = pchisq(W_val, rang, lower.tail = FALSE))
+
+fe_ci <- data.frame(
+  region = gsub("^region_acad", "", names(beta_fe)),
+  coef   = beta_fe,
+  se     = sqrt(diag(V_sub))
+) %>%
+  mutate(ic_bas = coef - 1.96 * se, ic_haut = coef + 1.96 * se,
+         region = str_to_title(gsub("_", " ", region)),
+         region = factor(region, levels = region[order(coef)]))
+```
+
+```{r fig-fe-academies, echo=FALSE, message=FALSE, warning=FALSE}
+#| fig-cap: "Region-academy fixed effects from the Poisson specification (M4), with 95% cluster-robust confidence intervals (reference = Auvergne-Rhône-Alpes)."
+#| fig-width: 7
+#| fig-height: 5
+
+ggplot(fe_ci, aes(coef, region)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(xmin = ic_bas, xmax = ic_haut)) +
+  labs(x = "Fixed effect (log scale)", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+```
+:::
+
+A Wald test based on the region-academy-clustered covariance matrix rejects the null hypothesis of no regional effects ($W = `r round(wald_fe$W, 1)`$, $\mathrm{df} = `r wald_fe$df`$, $p `r ifelse(wald_fe$p < 0.001, "< 0.001", paste0("= ", round(wald_fe$p, 3)))`$). @fig-fe-regions plots the coefficients of the 13 region-academy fixed effects in the M4 specification: Pays de la Loire (+0.58) and Bretagne (+0.45) stand out positively, while Corse (−0.64) and Île-de-France (−0.50) are significantly below the reference region.
+
+# Data
+
+
+
+
+# Results 
+
+
+
+::: {#refs}
+:::
+
+
+
+
+

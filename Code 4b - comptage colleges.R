@@ -1,12 +1,11 @@
 # =====================================================================
-# CODE 4b (v2) - COLLÈGES : Poisson -> NB2 -> hurdle/ZI
-# + EFFET FIXE ACADÉMIE (justifié par les fortes variations
-#   inter-académies : ex. 43% de lycéens dans le privé à Rennes
-#   contre 11% à Limoges). Identification par variation INTRA-académie.
+# CODE 4b (v3) - COLLÈGES : Poisson / NB2 / Hurdle + FE RÉGION ACADÉMIQUE
+# + indicateurs de ségrégation complémentaires (Code 2c)
+# Entrée  : df_analyse_colleges.parquet + df_segregation_complementaire.parquet
+# Sortie  : modeles_comptage.rds
 # =====================================================================
 library(arrow); library(dplyr); library(sandwich); library(lmtest)
-library(pscl); library(AER); library(ggplot2)
-library(sf); library(stringi); library(stringr)   # >>> FE ACADÉMIE
+library(pscl); library(AER); library(sf); library(stringi); library(stringr)
 
 os_name <- Sys.info()[["sysname"]]
 if (os_name == "Windows") {
@@ -21,22 +20,28 @@ if (os_name == "Windows") {
   DOSSIER_ECO <- file.path(DOSSIER_OUT, "data_eco")
 } else stop("Système d'exploitation non pris en charge.")
 
-VAR_Y       <- "nb_colleges_prives"
+VAR_Y <- "nb_colleges_prives"
 set.seed(2025)
 
-# >>> FE ACADÉMIE : normalisation identique au script de carte --------
+# ---------------------------------------------------------------------
+# 1. LECTURE + JOINTURE INDICATEURS SÉGRÉGATION (Code 2c)
+# ---------------------------------------------------------------------
+d <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
+df_segreg <- read_parquet(file.path(DOSSIER_OUT, "df_segregation_complementaire.parquet"))
+d <- d %>% left_join(df_segreg, by = "code_insee")
+cat("Communes avec indicateurs 2c :", sum(!is.na(d$z_exposition_riches)), "/", nrow(d), "\n")
+
+# ---------------------------------------------------------------------
+# 2. ACADÉMIE (fine) + RÉGION ACADÉMIQUE (13, pour FE/cluster)
+# ---------------------------------------------------------------------
 norm_acad <- function(x) {
   x <- tolower(stri_trans_general(as.character(x), "Latin-ASCII"))
   x <- trimws(gsub("^academie (de |d')?", "", x))
   gsub("[^a-z0-9]", "", x)
 }
 
-# >>> FE ACADÉMIE : centroïdes de population des communes de l'échantillon
 DEMI_CARREAU <- 100
-d <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
-
-files_eco <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$",
-                        full.names = TRUE)
+files_eco <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$", full.names = TRUE)
 centroides <- bind_rows(lapply(files_eco, function(f) {
   read_parquet(f, col_select = c("lcog_geo","x_l93","y_l93","ind")) %>%
     mutate(code_insee = substr(as.character(lcog_geo), 1, 5)) %>%
@@ -46,22 +51,18 @@ centroides <- bind_rows(lapply(files_eco, function(f) {
               y = weighted.mean(y_l93 + DEMI_CARREAU, ind), .groups = "drop")
 })) %>% st_as_sf(coords = c("x","y"), crs = 2154)
 
-# >>> FE ACADÉMIE : contours + jointure spatiale centroïde -> académie
 carte_acad <- st_read(CHEMIN_GEO, quiet = TRUE) %>% st_transform(2154)
 cand  <- names(carte_acad)[grepl("acad|lib|nom", tolower(names(carte_acad)))]
 col_acad <- cand[1]
-if (is.na(col_acad)) stop("Colonne du nom d'académie introuvable : voir names(carte_acad)")
+if (is.na(col_acad)) stop("Colonne académie introuvable dans le geojson")
 carte_acad <- carte_acad %>%
   mutate(academie = norm_acad(.data[[col_acad]])) %>%
   filter(!academie %in% c("guyane","guadeloupe","mayotte","lareunion","martinique")) %>%
   select(academie, geometry)
 
 acad_com <- st_join(st_transform(centroides, st_crs(carte_acad)), carte_acad) %>%
-  st_drop_geometry() %>%
-  select(code_insee, academie) %>%
-  distinct(code_insee, .keep_all = TRUE)
+  st_drop_geometry() %>% select(code_insee, academie) %>% distinct(code_insee, .keep_all = TRUE)
 
-# Filet de sécurité : communes sans contour (Mayotte etc.) via le département
 dept2academie <- c(
   "02"="amiens","60"="amiens","80"="amiens","59"="lille","62"="lille",
   "75"="paris","77"="creteil","93"="creteil","94"="creteil",
@@ -90,178 +91,160 @@ dept2academie <- c(
 
 d <- d %>%
   left_join(acad_com, by = "code_insee") %>%
-  mutate(academie = coalesce(academie, dept2academie[dept]))
-
-cat("Communes sans académie :", sum(is.na(d$academie)), "\n")
-cat("Répartition des communes par académie :\n")
-print(table(d$academie, useNA = "ifany"))
-# >>> Vigilance : si une seule académie domine l'échantillon, le FE
-# absorbe presque tout -> élargir l'échantillon pour que le FE soit
-# réellement informatif (cf. comparaison M2 / M2fe ci-dessous).
-# ---------------------------------------------------------------------
+  mutate(academie = coalesce(academie, dept2academie[dept]),
+         academie = factor(academie))
 
 region_academique <- c(
-  # Auvergne-Rhône-Alpes
-  "clermontferrand" = "auvergne_rhone_alpes",
-  "grenoble"        = "auvergne_rhone_alpes",
-  "lyon"            = "auvergne_rhone_alpes",
-  # Bourgogne-Franche-Comté
-  "besancon"        = "bourgogne_franche_comte",
-  "dijon"           = "bourgogne_franche_comte",
-  # Bretagne
-  "rennes"          = "bretagne",
-  # Centre-Val de Loire
-  "orleanstours"    = "centre_val_de_loire",
-  # Corse
-  "corse"           = "corse",
-  # Grand Est
-  "nancymetz"       = "grand_est",
-  "reims"           = "grand_est",
-  "strasbourg"      = "grand_est",
-  # Hauts-de-France
-  "amiens"          = "hauts_de_france",
-  "lille"           = "hauts_de_france",
-  # Île-de-France
-  "creteil"         = "ile_de_france",
-  "paris"           = "ile_de_france",
-  "versailles"      = "ile_de_france",
-  # Normandie
-  "normandie"       = "normandie",
-  # Nouvelle-Aquitaine
-  "bordeaux"        = "nouvelle_aquitaine",
-  "limoges"         = "nouvelle_aquitaine",
-  "poitiers"        = "nouvelle_aquitaine",
-  # Occitanie
-  "montpellier"     = "occitanie",
-  "toulouse"        = "occitanie",
-  # Pays de la Loire
-  "nantes"          = "pays_de_la_loire",
-  # Provence-Alpes-Côte d'Azur
-  "aixmarseille"    = "provence_alpes_cote_azur",
-  "nice"            = "provence_alpes_cote_azur"
-)
+  "clermontferrand"="auvergne_rhone_alpes", "grenoble"="auvergne_rhone_alpes", "lyon"="auvergne_rhone_alpes",
+  "besancon"="bourgogne_franche_comte", "dijon"="bourgogne_franche_comte",
+  "rennes"="bretagne",
+  "orleanstours"="centre_val_de_loire",
+  "corse"="corse",
+  "nancymetz"="grand_est", "reims"="grand_est", "strasbourg"="grand_est",
+  "amiens"="hauts_de_france", "lille"="hauts_de_france",
+  "creteil"="ile_de_france", "paris"="ile_de_france", "versailles"="ile_de_france",
+  "normandie"="normandie",
+  "bordeaux"="nouvelle_aquitaine", "limoges"="nouvelle_aquitaine", "poitiers"="nouvelle_aquitaine",
+  "montpellier"="occitanie", "toulouse"="occitanie",
+  "nantes"="pays_de_la_loire",
+  "aixmarseille"="provence_alpes_cote_azur", "nice"="provence_alpes_cote_azur")
 
+d <- d %>% mutate(region_acad = factor(region_academique[as.character(academie)]))
+cat("Communes sans académie :", sum(is.na(d$academie)), "\n")
+print(table(d$region_acad))
+
+# ---------------------------------------------------------------------
+# 3. VARIABLES
+# ---------------------------------------------------------------------
 d <- d %>%
-  mutate(region_acad = factor(region_academique[academie]))
-
-# Vérification
-table(d$region_acad)
-
-
-
-d <- d %>%
-  mutate(y        = .data[[VAR_Y]],
-         log_pop  = log(pop_totale),
-         log_rev  = log(revenu_moyen_com),
-         z_theil  = as.numeric(scale(theil_revenu)),
-         z_moran  = as.numeric(scale(moran_I_rev)),
-         academie = factor(region_acad))          # >>> FE ACADÉMIE
-
-X_HET    <- "z_theil"
-X_TAILLE <- "log_pop"
-X_CTRL   <- c("log_rev", "taux_pauv_commune", "nb_colleges_publics",
-              "dist_college_public_km", "nb_prives_5km_autres")
-X_HET2   <- c("z_theil", "z_moran")
+  mutate(y       = .data[[VAR_Y]],
+         log_pop = log(pop_totale),
+         log_rev = log(revenu_moyen_com),
+         z_theil = as.numeric(scale(theil_revenu)),
+         z_moran = as.numeric(scale(moran_I_rev)))
 
 rhs <- function(x) paste(x, collapse = " + ")
-formules <- list(
-  M0   = reformulate(X_HET, response = "y"),
-  M1   = reformulate(c(X_HET, X_TAILLE), response = "y"),
-  M2   = reformulate(c(X_HET, X_TAILLE, X_CTRL), response = "y"),
-  M3   = reformulate(c(X_HET2, X_TAILLE, X_CTRL), response = "y"),
-  # >>> FE ACADÉMIE : M4 = M3 + effets fixes académie
-  M4   = reformulate(c(X_HET2, X_TAILLE, X_CTRL, "academie"), response = "y"))
 
-vars_utiles <- unique(c("y", "dept", "academie", all.vars(formules$M4)))  # >>> M4
+X_TAILLE  <- "log_pop"
+X_CTRL    <- c("log_rev", "taux_pauv_commune", "nb_colleges_publics",
+               "dist_college_public_km", "nb_prives_5km_autres")
+X_SEG_BASE <- c("z_theil", "z_moran")
+X_SEG_NEW  <- c("z_exposition_riches", "z_polarisation", "z_part_pop_top10", "z_segregation_multidim")
+
+formules <- list(
+  M0  = reformulate("z_theil", response = "y"),
+  M1  = reformulate(c("z_theil", X_TAILLE), response = "y"),
+  M2  = reformulate(c(X_SEG_BASE, X_TAILLE, X_CTRL), response = "y"),
+  M3  = reformulate(c("z_theil", "z_exposition_riches", "z_polarisation",
+                      "z_part_pop_top10", X_TAILLE, X_CTRL), response = "y"),
+  M3b = reformulate(c("z_theil", "z_getis_ord_riches", "z_polarisation",
+                      "z_part_pop_top10", X_TAILLE, X_CTRL), response = "y"),
+  M3c = reformulate(c("z_segregation_multidim", "z_polarisation",
+                      "z_part_pop_top10", X_TAILLE, X_CTRL), response = "y"),
+  M3d = reformulate(c("z_theil", "z_entropie_diversite", "z_diversite_binaire",
+                      X_TAILLE, X_CTRL), response = "y"),
+  M4  = reformulate(c("z_theil", "z_exposition_riches", "z_polarisation",
+                      "z_part_pop_top10", "z_segregation_multidim",
+                      X_TAILLE, X_CTRL, "region_acad"), response = "y")
+)
+
+vars_utiles <- unique(c("y", "dept", "academie", "region_acad",
+                        unlist(lapply(formules, all.vars))))
+vars_utiles <- intersect(vars_utiles, names(d))
 d_mod <- d[complete.cases(d[, vars_utiles]), ]
-cat(sprintf("N = %d (%d perdus) | académies : %d\n",            # >>>
-            nrow(d_mod), nrow(d) - nrow(d_mod), nlevels(droplevels(d_mod$academie))))
+cat(sprintf("N = %d (%d perdus) | régions académiques : %d\n",
+            nrow(d_mod), nrow(d) - nrow(d_mod), nlevels(droplevels(d_mod$region_acad))))
 
 cat("\n--- Distribution de", VAR_Y, "---\n")
 print(table(d_mod$y))
 cat(sprintf("Moyenne = %.3f | Var/Moy = %.2f | Zéros = %.1f%%\n",
             mean(d_mod$y), var(d_mod$y)/mean(d_mod$y), 100*mean(d_mod$y == 0)))
 
-# ---- Poisson robuste (clusters : académie si FE, sinon département) ----
+# ---------------------------------------------------------------------
+# 4. POISSON ROBUSTE
+# ---------------------------------------------------------------------
 fit_pois <- lapply(formules, function(f) glm(f, family = poisson, data = d_mod))
 
-# >>> cluster au niveau le plus agrégé présent dans la spécification
-cluster_de <- function(nm) if (grepl("academie", paste(all.vars(formules[[nm]])))) {
-  d_mod$academie } else d_mod$dept
+cluster_de <- function(nm) {
+  if ("region_acad" %in% all.vars(formules[[nm]])) d_mod$region_acad else d_mod$dept
+}
 coef_robuste <- function(m, cluster) {
-  V <- tryCatch(vcovCL(m, cluster = cluster, type = "HC1"),
-                error = function(e) vcov(m))
+  V <- tryCatch(vcovCL(m, cluster = cluster, type = "HC1"), error = function(e) vcov(m))
   coeftest(m, vcov. = V)
 }
-cat("\n=== POISSON M3 (sans FE, cluster dept) ===\n")
-print(coef_robuste(fit_pois$M3, d_mod$dept))
-cat("\n=== POISSON M4 (FE académie, cluster académie) ===\n")     # >>>
-print(coef_robuste(fit_pois$M4, d_mod$academie))
 
-# Stabilité de z_theil / z_moran selon la spécification (dont + FE)
+cat("\n=== POISSON M3 (indicateurs ségrégation, cluster dept) ===\n")
+print(coef_robuste(fit_pois$M3, d_mod$dept))
+cat("\n=== POISSON M4 (FE région académique, cluster région) ===\n")
+print(coef_robuste(fit_pois$M4, d_mod$region_acad))
+
+# ---------------------------------------------------------------------
+# 5. STABILITÉ DES COEFFICIENTS
+# ---------------------------------------------------------------------
+vars_stab <- c("z_theil", "z_moran", "z_exposition_riches", "z_polarisation",
+               "z_part_pop_top10", "z_segregation_multidim")
 get_row <- function(ct, v) if (v %in% rownames(ct)) ct[v, ] else c(NA, NA, NA, NA)
 tab_stab <- do.call(rbind, lapply(names(fit_pois), function(nm) {
   ct <- coef_robuste(fit_pois[[nm]], cluster_de(nm))
-  rbind(data.frame(modele = nm, var = "z_theil",
-                   coef = get_row(ct,"z_theil")[1], se = get_row(ct,"z_theil")[2],
-                   p = get_row(ct,"z_theil")[4]),
-        data.frame(modele = nm, var = "z_moran",
-                   coef = get_row(ct,"z_moran")[1], se = get_row(ct,"z_moran")[2],
-                   p = get_row(ct,"z_moran")[4]))
+  do.call(rbind, lapply(vars_stab, function(v) {
+    r <- get_row(ct, v)
+    data.frame(modele = nm, variable = v, coef = r[1], se = r[2], p = r[4])
+  }))
 }))
 print(tab_stab, digits = 3)
-# >>> M2 -> M4 montre combien de l'association brute venait des
-# différences inter-académies (le "Rennes 43% vs Limoges 11%").
 
-# ---- Test : les FE académie sont-ils conjointement significatifs ? ----
+# ---------------------------------------------------------------------
+# 6. WALD JOINT FE RÉGION ACADÉMIQUE
+# ---------------------------------------------------------------------
 wt <- tryCatch({
-  V <- vcovCL(fit_pois$M4, cluster = d_mod$academie, type = "HC1")
-  betas <- coef(fit_pois$M4)[grepl("^academie", names(coef(fit_pois$M4)))]
+  V <- vcovCL(fit_pois$M4, cluster = d_mod$region_acad, type = "HC1")
+  betas <- coef(fit_pois$M4)[grepl("^region_acad", names(coef(fit_pois$M4)))]
   W <- as.numeric(t(betas) %*% solve(V[names(betas), names(betas)]) %*% betas)
-  cat(sprintf("\nWald joint FE académie : W = %.1f, df = %d, p = %.4g\n",
+  cat(sprintf("\nWald joint FE région académique : W = %.1f, df = %d, p = %.4g\n",
               W, length(betas), pchisq(W, length(betas), lower.tail = FALSE)))
-}, error = function(e) { message("Wald FE : ", e$message); NULL })
+}, error = function(e) message("Wald FE : ", e$message))
 
-# ---- Surdispersion -> NB2 (sur M4 avec FE) ----
-m_p <- fit_pois$M4                                        # >>> M4
+# ---------------------------------------------------------------------
+# 7. NB2 (M4)
+# ---------------------------------------------------------------------
+m_p <- fit_pois$M4
 cat("\nCameron-Trivedi NB2 :"); print(dispersiontest(m_p, trafo = 2))
-m_nb <- MASS::glm.nb(formules$M4, data = d_mod, control = glm.control(maxit = 100))
-cat("\n=== NB2 M4 (FE académie, cluster académie) ===\n")  # >>>
-print(coef_robuste(m_nb, d_mod$academie))
+m_nb <- tryCatch(MASS::glm.nb(formules$M4, data = d_mod, control = glm.control(maxit = 200)),
+                 error = function(e) { message("NB2 non convergent : ", e$message); NULL })
+if (!is.null(m_nb)) {
+  cat("\n=== NB2 M4 ===\n")
+  print(coef_robuste(m_nb, d_mod$region_acad))
+}
 
-# ---- Hurdle NB : FE académie dans les DEUX parties ----
-X_ZERO <- c(X_HET2, X_TAILLE, "log_rev", "taux_pauv_commune",
-            "nb_colleges_publics", "nb_prives_5km_autres", "academie")   # >>>
-f_hurdle <- as.formula(paste("y ~",
-                             rhs(c(X_HET2, X_TAILLE, X_CTRL, "academie")), "|", rhs(X_ZERO)))       # >>>
+# ---------------------------------------------------------------------
+# 8. HURDLE / ZINB (sur M4)
+# ---------------------------------------------------------------------
+X_COUNT <- setdiff(all.vars(formules$M4), "y")
+X_ZERO  <- X_COUNT
+f_hurdle <- as.formula(paste("y ~", rhs(X_COUNT), "|", rhs(X_ZERO)))
 
-m_hnb <- tryCatch(hurdle(f_hurdle, data = d_mod, dist = "negbin",
-                         zero.dist = "binomial", link = "logit"),
-                  error = function(e) { message(e$message); NULL })
+m_hnb  <- tryCatch(hurdle(f_hurdle, data = d_mod, dist = "negbin", zero.dist = "binomial"),
+                   error = function(e) { message("Hurdle NB : ", e$message); NULL })
 m_zinb <- tryCatch(zeroinfl(f_hurdle, data = d_mod, dist = "negbin", link = "logit"),
-                   error = function(e) { message(e$message); NULL })
-if (!is.null(m_hnb)) { cat("\n=== HURDLE NB (FE académie) ===\n"); print(summary(m_hnb)) }
-if (!is.null(m_zinb)) { cat("\n=== ZINB (FE académie) ===\n");     print(summary(m_zinb)) }
+                   error = function(e) { message("ZINB : ", e$message); NULL })
+m_hp   <- tryCatch(hurdle(f_hurdle, data = d_mod, dist = "poisson", zero.dist = "binomial"),
+                   error = function(e) { message("Hurdle Poisson : ", e$message); NULL })
+if (!is.null(m_hnb)) { cat("\n=== HURDLE NB ===\n"); print(summary(m_hnb)) }
+if (!is.null(m_zinb)) { cat("\n=== ZINB ===\n"); print(summary(m_zinb)) }
 
-m_hp <- tryCatch(hurdle(f_hurdle, data = d_mod, dist = "poisson",
-                        zero.dist = "binomial", link = "logit"),
-                 error = function(e) { message(e$message); NULL })
-if (!is.null(m_hp)) summary(m_hp)
-
-# ---- Comparaison ----
+# ---------------------------------------------------------------------
+# 9. COMPARAISON
+# ---------------------------------------------------------------------
 modeles <- Filter(Negate(is.null), list(Poisson = m_p, NB2 = m_nb,
-                                        Hurdle_NB = m_hnb, ZINB = m_zinb))
+                                        Hurdle_NB = m_hnb, ZINB = m_zinb, Hurdle_Pois = m_hp))
 cat("\n--- AIC / BIC ---\n")
-print(data.frame(modele = names(modeles),
-                 AIC = sapply(modeles, AIC), BIC = sapply(modeles, BIC)),
-      row.names = FALSE)
+print(data.frame(modele = names(modeles), AIC = sapply(modeles, AIC),
+                 BIC = sapply(modeles, BIC)), row.names = FALSE)
 
-K <- max(d_mod$y); K <- min(K, 8)
+K <- min(max(d_mod$y), 8)
 proba_pred <- function(m, K) {
-  if (inherits(m, "negbin")) { mu <- fitted(m)
-  sapply(0:K, function(j) sum(dnbinom(j, size = m$theta, mu = mu)))
-  } else if (inherits(m, "glm")) { mu <- fitted(m)
-  sapply(0:K, function(j) sum(dpois(j, mu)))
+  if (inherits(m, "negbin")) { mu <- fitted(m); sapply(0:K, function(j) sum(dnbinom(j, size = m$theta, mu = mu)))
+  } else if (inherits(m, "glm")) { mu <- fitted(m); sapply(0:K, function(j) sum(dpois(j, mu)))
   } else colSums(predict(m, type = "prob", at = 0:K))
 }
 tab_freq <- data.frame(y = 0:K, Observe = sapply(0:K, function(j) sum(d_mod$y == j)),
@@ -269,14 +252,17 @@ tab_freq <- data.frame(y = 0:K, Observe = sapply(0:K, function(j) sum(d_mod$y ==
 cat("\n--- Fréquences observées vs prédites ---\n")
 print(round(tab_freq, 1), row.names = FALSE)
 
-# ---- IRR et AME ----
-irr_table <- function(m, cluster = d_mod$academie) {                  # >>>
+# ---------------------------------------------------------------------
+# 10. IRR + AME (modèle préféré : Poisson M4)
+# ---------------------------------------------------------------------
+irr_table <- function(m, cluster = d_mod$region_acad) {
   ct <- coef_robuste(m, cluster)
   data.frame(variable = rownames(ct), IRR = exp(ct[,1]),
              IC_bas = exp(ct[,1] - 1.96*ct[,2]), IC_haut = exp(ct[,1] + 1.96*ct[,2]),
              p = ct[,4], row.names = NULL)
 }
-cat("\n--- IRR (NB2 M4, cluster académie) ---\n"); print(irr_table(m_nb), digits = 3)
+cat("\n--- IRR (Poisson M4) ---\n")
+print(irr_table(m_p), digits = 3)
 
 ame_num <- function(m, data, var, h = 0.01) {
   d1 <- data; d0 <- data
@@ -284,24 +270,16 @@ ame_num <- function(m, data, var, h = 0.01) {
   mean((predict(m, newdata = d1, type = "response") -
           predict(m, newdata = d0, type = "response")) / h)
 }
-cat("\n--- AME z_theil / z_moran (tous modèles) ---\n")
-print(rbind(z_theil = sapply(modeles, ame_num, data = d_mod, var = "z_theil"),
-            z_moran = sapply(modeles, ame_num, data = d_mod, var = "z_moran")))
+cat("\n--- AME des indicateurs de ségrégation (Poisson M4) ---\n")
+print(sapply(vars_stab, function(v) ame_num(m_p, d_mod, v)))
 
-
-# =====================================================================
-# SAUVEGARDE : données + modèles pour le document Quarto (lecture < 5 s)
-# =====================================================================
-modeles <- Filter(Negate(is.null), list(Poisson = m_p, NB2 = m_nb,
-                                        Hurdle_NB = m_hnb, ZINB = m_zinb))
+# ---------------------------------------------------------------------
+# 11. SAUVEGARDE
+# ---------------------------------------------------------------------
 saveRDS(list(
-  d_mod   = d_mod,                    # données de estimation (complete cases)
-  modeles = modeles,                   # Poisson, NB2, Hurdle NB, ZINB
-  formules = formules,
-  ct_nb2  = dispersiontest(m_p, trafo = 2),   # Cameron-Trivedi NB2
-  ct_nb1  = dispersiontest(m_p, trafo = 1),   # variante NB1 (robustesse)
-  tab_stab = tab_stab,                        # stabilité M0->M4
-  tab_freq = tab_freq,                        # fréq. observées vs prédites
-  wald_fe  = wt                               # test joint des FE académie
+  d_mod = d_mod, modeles = modeles, formules = formules,
+  tab_stab = tab_stab, tab_freq = tab_freq, wald_fe = wt,
+  ct_nb2 = dispersiontest(m_p, trafo = 2)
 ), file.path(DOSSIER_OUT, "modeles_comptage.rds"))
 cat("modeles_comptage.rds écrit.\n")
+
