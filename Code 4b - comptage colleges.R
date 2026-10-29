@@ -100,13 +100,62 @@ print(table(d$academie, useNA = "ifany"))
 # réellement informatif (cf. comparaison M2 / M2fe ci-dessous).
 # ---------------------------------------------------------------------
 
+region_academique <- c(
+  # Auvergne-Rhône-Alpes
+  "clermontferrand" = "auvergne_rhone_alpes",
+  "grenoble"        = "auvergne_rhone_alpes",
+  "lyon"            = "auvergne_rhone_alpes",
+  # Bourgogne-Franche-Comté
+  "besancon"        = "bourgogne_franche_comte",
+  "dijon"           = "bourgogne_franche_comte",
+  # Bretagne
+  "rennes"          = "bretagne",
+  # Centre-Val de Loire
+  "orleanstours"    = "centre_val_de_loire",
+  # Corse
+  "corse"           = "corse",
+  # Grand Est
+  "nancymetz"       = "grand_est",
+  "reims"           = "grand_est",
+  "strasbourg"      = "grand_est",
+  # Hauts-de-France
+  "amiens"          = "hauts_de_france",
+  "lille"           = "hauts_de_france",
+  # Île-de-France
+  "creteil"         = "ile_de_france",
+  "paris"           = "ile_de_france",
+  "versailles"      = "ile_de_france",
+  # Normandie
+  "normandie"       = "normandie",
+  # Nouvelle-Aquitaine
+  "bordeaux"        = "nouvelle_aquitaine",
+  "limoges"         = "nouvelle_aquitaine",
+  "poitiers"        = "nouvelle_aquitaine",
+  # Occitanie
+  "montpellier"     = "occitanie",
+  "toulouse"        = "occitanie",
+  # Pays de la Loire
+  "nantes"          = "pays_de_la_loire",
+  # Provence-Alpes-Côte d'Azur
+  "aixmarseille"    = "provence_alpes_cote_azur",
+  "nice"            = "provence_alpes_cote_azur"
+)
+
+d <- d %>%
+  mutate(region_acad = factor(region_academique[academie]))
+
+# Vérification
+table(d$region_acad)
+
+
+
 d <- d %>%
   mutate(y        = .data[[VAR_Y]],
          log_pop  = log(pop_totale),
          log_rev  = log(revenu_moyen_com),
          z_theil  = as.numeric(scale(theil_revenu)),
          z_moran  = as.numeric(scale(moran_I_rev)),
-         academie = factor(academie))          # >>> FE ACADÉMIE
+         academie = factor(region_acad))          # >>> FE ACADÉMIE
 
 X_HET    <- "z_theil"
 X_TAILLE <- "log_pop"

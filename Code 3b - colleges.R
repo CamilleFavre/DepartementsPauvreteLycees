@@ -57,6 +57,13 @@ IPScoll        <- read_parquet(file.path(DOSSIER, "fr-en-ips-colleges-ap2023.par
 # brevet <- read_parquet(file.path(DOSSIER, "fr-en-indicateurs-de-resultat-des-colleges...parquet"))
 brevet <- NULL   # <- mettre NULL tant que le fichier n'est pas identifié
 
+# Lire les indicateurs complémentaires
+df_segreg <- read_parquet(file.path(DOSSIER_OUT, "df_segregation_complementaire.parquet"))
+
+# Fusionner
+df_poplarge <- df_poplarge %>%
+  left_join(df_segreg, by = "code_insee")
+
 # ---------------------------------------------------------------------
 # 2. COLLÈGES : nettoyage
 # ---------------------------------------------------------------------
