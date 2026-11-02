@@ -1,0 +1,354 @@
+---
+title: "Collèges privés et inégalités de revenus en France"
+subtitle: "Niveau global ou ségrégation spatiale ?"
+author: "Camille Favre"
+date: "Octobre 2026"
+format:
+  html:
+    include-after-body: script.html
+    embed-resources: true
+    theme: styles.scss
+    toc: true
+    toc-depth: 2
+    toc-title: "Sommaire"
+    number-sections: true
+    code-fold: true
+    code-summary: "Voir le code"
+    lightbox:
+      match: auto
+      effect: zoom
+    fig-responsive: true
+    fontsize: 1.05em
+    citations-hover: true
+    footnotes-hover: true
+    reference-location: margin   # notes de bas de page en marge, très "papier"
+---
+
+
+```{r code5-dashboard, message=FALSE, warning=FALSE}
+# =====================================================================
+# CODE 5 - TABLEAU DE BORD : toutes les villes, tous les indicateurs
+# =====================================================================
+library(arrow); library(dplyr); library(tidyr); library(tibble)
+library(sf); library(ggplot2); library(patchwork); library(stringr)
+library(knitr); library(kableExtra)
+
+os_name <- Sys.info()[["sysname"]]
+if (os_name == "Windows") {
+  DOSSIER     <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+} else if (os_name == "Darwin") {
+  DOSSIER     <- "/Users/camillefavre/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
+  DOSSIER_OUT <- "/Users/camillefavre/DepartementsPauvreteLycees"
+} else stop("OS non pris en charge")
+
+DOSSIER_ECO <- file.path(DOSSIER_OUT, "data_eco")
+CHEMIN_CARREAUX <- file.path(DOSSIER, "france_metro", "carreaux_200m_met.gpkg")
+set.seed(2025)
+
+d        <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
+df_seg   <- read_parquet(file.path(DOSSIER_OUT, "df_segregation_complementaire.parquet"))
+charg    <- readRDS(file.path(DOSSIER_OUT, "modeles_comptage.rds"))
+annuaire <- read_parquet(file.path(DOSSIER, "fr-en-annuaire-education.parquet"))
+
+d_mod   <- charg$d_mod
+modeles <- charg$modeles
+m_p     <- modeles$Poisson
+
+norm_acad <- function(x) {
+  x <- tolower(stringi::stri_trans_general(as.character(x), "Latin-ASCII"))
+  x <- trimws(gsub("^academie (de |d')?", "", x))
+  gsub("[^a-z0-9]", "", x)
+}
+
+DEMI_CARREAU <- 100
+files_eco <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$", full.names = TRUE)
+centroides <- bind_rows(lapply(files_eco, function(f) {
+  read_parquet(f, col_select = c("lcog_geo","x_l93","y_l93","ind")) %>%
+    mutate(code_insee = substr(as.character(lcog_geo), 1, 5)) %>%
+    filter(code_insee %in% d$code_insee, is.finite(ind), ind > 0) %>%
+    group_by(code_insee) %>%
+    summarise(x = weighted.mean(x_l93 + DEMI_CARREAU, ind),
+              y = weighted.mean(y_l93 + DEMI_CARREAU, ind), .groups = "drop")
+})) %>% st_as_sf(coords = c("x","y"), crs = 2154)
+
+CHEMIN_GEO <- file.path(DOSSIER_OUT, "fr-en-contour-academies-2020.geojson")
+carte_acad <- st_read(CHEMIN_GEO, quiet = TRUE) %>% st_transform(2154)
+cand <- names(carte_acad)[grepl("acad|lib|nom", tolower(names(carte_acad)))]
+carte_acad <- carte_acad %>%
+  mutate(academie = norm_acad(.data[[cand[1]]])) %>%
+  filter(!academie %in% c("guyane","guadeloupe","mayotte","lareunion","martinique")) %>%
+  select(academie, geometry)
+
+acad_com <- st_join(st_transform(centroides, st_crs(carte_acad)), carte_acad) %>%
+  st_drop_geometry() %>% select(code_insee, academie) %>% distinct(code_insee, .keep_all = TRUE)
+
+dept2academie <- c(
+  "02"="amiens","60"="amiens","80"="amiens","59"="lille","62"="lille",
+  "75"="paris","77"="creteil","93"="creteil","94"="creteil",
+  "78"="versailles","91"="versailles","92"="versailles","95"="versailles",
+  "14"="normandie","27"="normandie","50"="normandie","61"="normandie","76"="normandie",
+  "21"="dijon","58"="dijon","71"="dijon","89"="dijon",
+  "25"="besancon","39"="besancon","70"="besancon","90"="besancon",
+  "54"="nancymetz","55"="nancymetz","57"="nancymetz","88"="nancymetz",
+  "08"="reims","10"="reims","51"="reims","52"="reims",
+  "67"="strasbourg","68"="strasbourg",
+  "44"="nantes","49"="nantes","53"="nantes","72"="nantes","85"="nantes",
+  "22"="rennes","29"="rennes","35"="rennes","56"="rennes",
+  "16"="poitiers","17"="poitiers","79"="poitiers","86"="poitiers",
+  "18"="orleanstours","28"="orleanstours","36"="orleanstours","37"="orleanstours","41"="orleanstours",
+  "24"="bordeaux","33"="bordeaux","40"="bordeaux","47"="bordeaux","64"="bordeaux",
+  "19"="limoges","23"="limoges","87"="limoges",
+  "03"="clermontferrand","15"="clermontferrand","43"="clermontferrand","63"="clermontferrand",
+  "01"="lyon","42"="lyon","69"="lyon",
+  "07"="grenoble","26"="grenoble","38"="grenoble","73"="grenoble","74"="grenoble",
+  "04"="aixmarseille","05"="aixmarseille","13"="aixmarseille","84"="aixmarseille",
+  "06"="nice","83"="nice",
+  "11"="montpellier","30"="montpellier","34"="montpellier","48"="montpellier","66"="montpellier",
+  "09"="toulouse","12"="toulouse","31"="toulouse","32"="toulouse","46"="toulouse",
+  "65"="toulouse","81"="toulouse","82"="toulouse",
+  "2A"="corse","2B"="corse")
+
+region_academique <- c(
+  "clermontferrand"="auvergne_rhone_alpes","grenoble"="auvergne_rhone_alpes","lyon"="auvergne_rhone_alpes",
+  "besancon"="bourgogne_franche_comte","dijon"="bourgogne_franche_comte",
+  "rennes"="bretagne","orleanstours"="centre_val_de_loire","corse"="corse",
+  "nancymetz"="grand_est","reims"="grand_est","strasbourg"="grand_est",
+  "amiens"="hauts_de_france","lille"="hauts_de_france",
+  "creteil"="ile_de_france","paris"="ile_de_france","versailles"="ile_de_france",
+  "normandie"="normandie",
+  "bordeaux"="nouvelle_aquitaine","limoges"="nouvelle_aquitaine","poitiers"="nouvelle_aquitaine",
+  "montpellier"="occitanie","toulouse"="occitanie","nantes"="pays_de_la_loire",
+  "aixmarseille"="provence_alpes_cote_azur","nice"="provence_alpes_cote_azur")
+
+master <- d %>%
+  left_join(df_seg, by = "code_insee") %>%
+  left_join(acad_com, by = "code_insee") %>%
+  mutate(
+    academie    = coalesce(academie, dept2academie[dept]),
+    region_acad = factor(region_academique[academie]),
+    dept        = ifelse(startsWith(code_insee, "97"), substr(code_insee, 1, 3), substr(code_insee, 1, 2)),
+    log_pop     = log(pop_totale),
+    log_rev     = log(revenu_moyen_com),
+    z_theil     = as.numeric(scale(theil_revenu)),
+    z_moran     = as.numeric(scale(moran_I_rev))
+  )
+
+cent_pop <- centroides %>%
+  mutate(x_pop = st_coordinates(.)[, "X"],
+         y_pop = st_coordinates(.)[, "Y"]) %>%
+  st_drop_geometry() %>%
+  select(code_insee, x_pop, y_pop)
+master <- master %>% left_join(cent_pop, by = "code_insee")
+
+if (!is.null(d_mod) && "y" %in% names(d_mod)) {
+  pred <- tibble(code_insee = d_mod$code_insee,
+                 y_obs = d_mod$y,
+                 y_pred = fitted(m_p),
+                 resid = residuals(m_p, type = "pearson"))
+  master <- master %>% left_join(pred, by = "code_insee")
+}
+
+colleges <- annuaire %>%
+  filter(grepl("^Coll", type_etablissement),
+         toupper(coalesce(as.character(etat), "")) == "OUVERT") %>%
+  mutate(
+    code_insee   = str_pad(as.character(code_commune), 5, pad = "0"),
+    secteur      = case_when(statut_public_prive == "Public" ~ "public",
+                             grepl("^Priv", statut_public_prive) ~ "prive",
+                             TRUE ~ NA_character_),
+    sous_contrat = secteur == "prive" & grepl("CONTRAT", type_contrat_prive) & !grepl("HORS CONTRAT", type_contrat_prive),
+    hors_contrat = secteur == "prive" & grepl("HORS CONTRAT", type_contrat_prive)
+  ) %>%
+  filter(!is.na(secteur))
+
+colleges_sf <- colleges %>%
+  filter(!is.na(latitude), !is.na(longitude)) %>%
+  st_as_sf(coords = c("longitude","latitude"), crs = 4326) %>%
+  st_transform(2154)
+
+lire_carreaux_ville <- function(code) {
+  st_read(CHEMIN_CARREAUX,
+          query = sprintf("SELECT * FROM carreaux_200m_met WHERE lcog_geo LIKE '%s%%'", code),
+          quiet = TRUE) %>%
+    filter(is.finite(ind), ind > 0, is.finite(ind_snv)) %>%
+    mutate(revenu = ind_snv / ind,
+           taux_pauv = ifelse(!is.na(men) & men > 0, men_pauv / men * 100, NA_real_)) %>%
+    st_transform(2154)
+}
+
+recap <- data.frame(
+  indicateur = c("Communes", "Population totale", "Collèges privés (total)",
+                "Collèges publics (total)", "Communes sans privé (%)",
+                "Theil moyen", "Moran moyen", "Exposition riches moyenne",
+                "Polarisation moyenne", "y prédit moyen (M4)"),
+  valeur = c(nrow(master),
+             sum(master$pop_totale, na.rm = TRUE),
+             sum(master$nb_colleges_prives, na.rm = TRUE),
+             sum(master$nb_colleges_publics, na.rm = TRUE),
+             round(100 * mean(master$nb_colleges_prives == 0, na.rm = TRUE), 1),
+             round(mean(master$theil_revenu, na.rm = TRUE), 4),
+             round(mean(master$moran_I_rev, na.rm = TRUE), 3),
+             round(mean(master$exposition_riches, na.rm = TRUE), 3),
+             round(mean(master$polarisation, na.rm = TRUE), 3),
+             round(mean(master$y_pred, na.rm = TRUE), 3))
+)
+print(recap, row.names = FALSE)
+
+top <- master %>%
+  arrange(desc(nb_colleges_prives), desc(pop_totale)) %>%
+  head(50) %>%
+  select(code_insee, nom_commune, region_acad, pop_totale, revenu_moyen_com,
+         taux_pauv_commune, nb_colleges_publics, nb_colleges_prives,
+         nb_prives_sous_contrat, nb_prives_hors_contrat,
+         dist_college_public_km, nb_prives_5km_autres,
+         y_pred, resid,
+         theil_revenu, moran_I_rev, exposition_riches, polarisation,
+         part_pop_top10, getis_ord_riches, segregation_multidim,
+         z_theil, z_moran, z_exposition_riches, z_polarisation, z_part_pop_top10,
+         z_getis_ord_riches, z_segregation_multidim)
+
+write.csv(top, file.path(DOSSIER_OUT, "top_villes_colleges_prives.csv"), row.names = FALSE)
+write_parquet(master, file.path(DOSSIER_OUT, "df_dashboard.parquet"))
+cat("Export OK : df_dashboard.parquet + top_villes_colleges_prives.csv\n")
+
+# ---- Carte nationale ----
+carte_fr <- master %>% filter(!is.na(x_pop), !is.na(y_pop))
+p <- ggplot() +
+  geom_sf(data = colleges_sf, aes(color = secteur), alpha = 0.5, size = 0.8) +
+  geom_point(data = carte_fr, aes(x = x_pop, y = y_pop, size = nb_colleges_prives, fill = region_acad),
+             shape = 21, color = "black", alpha = 0.7) +
+  scale_color_manual(values = c(public = "#2c7fb8", prive = "#d7301f"), name = "Collèges (annuaire)") +
+  scale_fill_viridis_d(option = "turbo", name = "Région académique") +
+  scale_size_continuous(name = "Nb collèges privés\n(dans la commune)", range = c(1, 8)) +
+  coord_sf() + theme_minimal(base_size = 11) +
+  labs(title = "France métropolitaine : collèges (points colorés) et communes de l'échantillon (bulles)",
+       subtitle = paste0(nrow(carte_fr), " communes, ", nrow(colleges_sf), " collèges géolocalisés"))
+print(p)
+ggsave(file.path(DOSSIER_OUT, "fig_carte_france.png"), p, width = 9, height = 10, dpi = 150)
+
+# ---- Scatter indices ----
+viz <- master %>%
+  select(nb_colleges_prives, z_theil, z_moran, z_exposition_riches, z_polarisation,
+         z_part_pop_top10, z_getis_ord_riches, z_segregation_multidim, region_acad) %>%
+  pivot_longer(cols = starts_with("z_"), names_to = "indice", values_to = "z") %>%
+  filter(!is.na(z), !is.na(nb_colleges_prives))
+p <- ggplot(viz, aes(z, nb_colleges_prives, color = region_acad)) +
+  geom_point(alpha = 0.4, size = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.6) +
+  facet_wrap(~ indice, scales = "free_x", ncol = 3) +
+  scale_y_sqrt() + theme_minimal(base_size = 10) +
+  labs(x = "Indice de ségrégation (z-score)", y = "Nb collèges privés (échelle racine)",
+       color = "Région académique", title = "Association brute : ségrégation intra-communale vs offre privée")
+print(p)
+ggsave(file.path(DOSSIER_OUT, "fig_scatter_indices.png"), p, width = 12, height = 9, dpi = 150)
+
+# ---- Heatmap corrélations ----
+inds <- c("theil_revenu","moran_I_rev","exposition_riches","polarisation",
+          "part_pop_top10","part_pop_bottom10","getis_ord_riches","segregation_multidim",
+          "entropie_diversite","diversite_binaire","taux_pauv_commune","revenu_moyen_com")
+cm <- cor(master[, inds], use = "pairwise.complete.obs")
+cm_df <- as.data.frame(cm) %>% rownames_to_column("var1") %>%
+  pivot_longer(-var1, names_to = "var2", values_to = "r")
+p <- ggplot(cm_df, aes(var2, var1, fill = r)) +
+  geom_tile() + geom_text(aes(label = round(r, 2)), size = 2.5) +
+  scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac", midpoint = 0, limits = c(-1,1)) +
+  theme_minimal(base_size = 8) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, fill = "r", title = "Corrélations entre indicateurs de ségrégation (valeurs brutes)")
+print(p)
+ggsave(file.path(DOSSIER_OUT, "fig_heatmap_corr.png"), p, width = 9, height = 8, dpi = 150)
+
+# ---- Prédit vs observé + résidus ----
+pv <- master %>% filter(!is.na(y_pred))
+p1 <- ggplot(pv, aes(y_pred, nb_colleges_prives, color = region_acad)) +
+  geom_point(alpha = 0.5) + geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  scale_x_sqrt() + scale_y_sqrt() + theme_minimal(base_size = 10) +
+  labs(x = "Prédit (M4, racine)", y = "Observé (racine)", color = "Région",
+       title = "Modèle M4 : observé vs prédit")
+p2 <- ggplot(pv, aes(region_acad, resid, fill = region_acad)) +
+  geom_boxplot(outlier.alpha = 0.3) + coord_flip() + theme_minimal(base_size = 9) +
+  labs(x = NULL, y = "Résidu de Pearson", title = "Résidus par région académique") +
+  theme(legend.position = "none")
+print(p1 + p2)
+
+# ---- Fonction fiche ville ----
+fiche_ville <- function(code, save = TRUE) {
+  lig <- master %>% filter(code_insee == code)
+  if (nrow(lig) == 0) stop("Commune inconnue : ", code)
+  nom <- lig$nom_commune[1]
+  car <- lire_carreaux_ville(code)
+  cols <- colleges_sf %>% filter(code_insee == code)
+
+  p_carte <- ggplot(car) +
+    geom_sf(aes(fill = revenu), color = NA) +
+    scale_fill_viridis_c(option = "magma", name = "Revenu €/uc") +
+    labs(title = paste0(nom, " (", code, ") — carreaux 200 m colorés par le revenu")) +
+    theme_void(base_size = 10)
+  if (nrow(cols) > 0) {
+    p_carte <- p_carte +
+      geom_sf(data = cols, aes(color = secteur, shape = secteur), size = 3, stroke = 1.2) +
+      scale_color_manual(values = c(public = "#2166ac", prive = "#b2182b")) +
+      scale_shape_manual(values = c(public = 16, prive = 18)) +
+      labs(color = "Collège", shape = "Collège",
+           subtitle = paste0(sum(cols$secteur == "prive"), " privé(s), ", sum(cols$secteur == "public"), " public(s)"))
+  }
+
+  inds <- tibble(indice = c("z_theil","z_moran","z_exposition_riches","z_polarisation",
+                            "z_part_pop_top10","z_getis_ord_riches","z_segregation_multidim"),
+                 valeur = as.numeric(lig[1, c("z_theil","z_moran","z_exposition_riches","z_polarisation",
+                                               "z_part_pop_top10","z_getis_ord_riches","z_segregation_multidim")]))
+  p_ind <- ggplot(inds, aes(reorder(indice, valeur), valeur)) +
+    geom_col(fill = "#6a51a3") + coord_flip() +
+    geom_hline(yintercept = 0, color = "grey40") +
+    labs(title = "Indices de ségrégation (z-scores)", x = NULL, y = NULL) +
+    theme_minimal(base_size = 9)
+
+  infos <- tibble(champ = c("Population","Revenu moyen","Taux pauvreté","Nb collèges publics",
+                            "Nb collèges privés","  dont sous contrat","  dont hors contrat",
+                            "Dist. collège public (km)","Privés à 5 km (hors commune)",
+                            "Prédiction M4","Région académique"),
+                   val = c(format(lig$pop_totale, big.mark = " "),
+                           paste0(round(lig$revenu_moyen_com), " €"),
+                           paste0(round(lig$taux_pauv_commune, 1), " %"),
+                           lig$nb_colleges_publics, lig$nb_colleges_prives,
+                           lig$nb_prives_sous_contrat, lig$nb_prives_hors_contrat,
+                           round(lig$dist_college_public_km, 2),
+                           lig$nb_prives_5km_autres,
+                           round(lig$y_pred, 2),
+                           as.character(lig$region_acad)))
+  p_inf <- ggplot(infos, aes(x = champ, y = 1, label = paste0(champ, " : ", val))) +
+    geom_text(hjust = 0, size = 3.2, family = "mono") +
+    labs(title = "Fiche commune") + theme_void() + xlim(0, 10) + ylim(0, nrow(infos) + 1) +
+    scale_y_reverse()
+
+  p_final <- (p_carte | p_inf) / p_ind + plot_layout(heights = c(3, 1))
+  if (save) ggsave(file.path(DOSSIER_OUT, paste0("fig_dashboard_", code, "_", gsub("[^A-Za-z0-9]", "_", nom), ".png")),
+                   p_final, width = 14, height = 9, dpi = 150)
+  print(p_final)
+}
+
+# ---- Fiches des 6 plus grandes villes avec au moins un privé ----
+codes_ex <- master %>%
+  filter(nb_colleges_prives > 0, !is.na(pop_totale)) %>%
+  arrange(desc(pop_totale)) %>% slice_head(n = 6) %>% pull(code_insee)
+for (cc in codes_ex) {
+  tryCatch(fiche_ville(cc), error = function(e) message(cc, " : ", e$message))
+}
+
+# ---- Tableau global ----
+vars_tbl <- c("pop_totale","revenu_moyen_com","taux_pauv_commune","theil_revenu","moran_I_rev",
+              "exposition_riches","polarisation","part_pop_top10","getis_ord_riches",
+              "segregation_multidim","nb_colleges_publics","nb_colleges_prives",
+              "nb_prives_sous_contrat","nb_prives_hors_contrat","dist_college_public_km",
+              "nb_prives_5km_autres","y_pred")
+tab <- master %>% select(all_of(vars_tbl)) %>%
+  summarise(across(everything(), list(min = ~min(., na.rm=TRUE), q25 = ~quantile(., .25, na.rm=TRUE),
+                                     med = ~median(., na.rm=TRUE), moy = ~mean(., na.rm=TRUE),
+                                     q75 = ~quantile(., .75, na.rm=TRUE), max = ~max(., na.rm=TRUE))))
+tab_long <- tab %>% pivot_longer(everything(), names_to = c("variable", "stat"), names_sep = "_") %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  mutate(across(where(is.numeric), ~ round(., 3)))
+print(kable(tab_long, caption = "Vue globale : distribution des indicateurs sur l'échantillon") %>%
+        kable_styling(full_width = FALSE, font_size = 10))
+```
+

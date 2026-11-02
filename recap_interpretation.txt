@@ -1,0 +1,47 @@
+============================================================
+ RÉCAP INTERPRÉTATION - PROJET MARGOLIS (count data)
+ Date : 2026-10-30 | N = 944
+============================================================
+
+--- 1. VARIABLE DÉPENDANTE y = nb_colleges_prives ---
+moyenne = 1.405 | variance = 4.916 | Var/Moy = 3.50 | zeros = 37.4% | min = 0 | max = 19
+distribution :
+
+--- 2. STATISTIQUES DESCRIPTIVES DES X CLÉS ---
+
+--- 3. MODÈLES : AIC / BIC / déviance ---
+
+--- 4. COEFFICIENTS POISSON M4 (cluster région académique, HC1) ---
+
+--- 5. STABILITÉ DES COEFFICIENTS DE SÉGRÉGATION (M0 -> M4) ---
+
+--- 6. FRÉQUENCES OBSERVÉES vs PRÉDIITES (M4 Poisson + Hurdle) ---
+
+--- 7. AME des indicateurs de ségrégation (M4, delta numérique) ---
+
+--- 8. TESTS DE SPÉCIFICATION (Code 7) ---
+
+--- 9. ÉCART beta(M4)-beta(M3) : delta method + bootstrap cluster ---
+
+--- 10. MONTE CARLO (M=200) : biais / sd / mean SE / couverture 95% ---
+
+--- 11. SPATIAL : Moran I des résidus + CV spatial vs aléatoire ---
+Moran I résidus M4 : I = 0.1308, p = 3.86e-23
+SAR : non estimé
+
+--- 12. WALD JOINT FE RÉGION (depuis Code 4b v3) ---
+wald_fe non sauvé (prévu)
+
+--- 13. CAMERON-TRIVEDI (sauvé dans modeles_comptage.rds) ---
+
+============================================================
+
+ PHRASES PRÊTES À COLLER DANS LE RAPPORT
+============================================================
+
+- L'échantillon comporte 944 communes, avec en moyenne 1.40 collège(s) privé(s) par commune (37% de zéros). La variance (4.92) excède la moyenne (1.40), mais le test de Cameron-Trivedi donne alpha = -0.043 (p = 0.986) : pas de surdispersion conditionnelle une fois les FE régionales incluses, ce qui justifie le Poisson plutôt que NB2.
+- Le test de Van den Broek rejette l'hypothèse poissonnienne pour les zéros (stat = -2.60, p = 0.009) : un modèle hurdle est justifié ; il obtient le meilleur AIC (2260.9) et prédit parfaitement les zéros.
+- Dans M4, z_exposition_riches a un effet beta = 0.0350 (IRR = 1.036, p = 0.013) : +1 écart-type d'exposition aux riches multiplie le nombre attendu de collèges privés par 1.04.
+- L'ajout des FE régionales (M3 -> M4) change beta(z_exposition_riches) de 0.0150 : l'écart n'est pas significatif (bootstrap cluster B=500 : IC95 [-0.020 ; 0.067], p = 0.52), donc le résultat est robuste à l'hétérogénéité régionale non observée.
+- Monte Carlo (M=200, DGP connu beta=0.035) : sous DGP Poisson, biais = -0.0000, couverture 95% = 0.97 ; sous DGP NB2, Poisson reste sans biais (-0.0012) mais sous-estime les SE, NB2 couvre NaN. Comme CT ne détecte pas de surdispersion, le Poisson est retenu.
+- Autocorrélation spatiale des résidus de M4 : Moran I = 0.131 (p < 0.001), d'où SE clusterisées par région académique. Le CV par blocs spatiaux (MSE = 1.673) surestime correctement l'erreur vs CV aléatoire (MSE = 1.457) : le CV aléatoire sous-estime l'erreur prédictive à cause de la fuite spatiale.
