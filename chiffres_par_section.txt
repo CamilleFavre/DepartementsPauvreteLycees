@@ -1,0 +1,23 @@
+CHIFFRES DU RENDU MARGOLIS - 10 PAGES - généré le 2026-11-02
+Sources : modeles_comptage.rds (Code 4b v3) + code7.rds (Code 7)
+
+############################################################
+## [P1-INTRO] Introduction - question, données, pourquoi comptage
+############################################################
+N = 944 communes | y = nb_colleges_prives : moyenne = 1.405, variance = 4.916, Var/Moy = 3.50
+Zéros = 353 communes (37.4%) | min = 0 | max = 19
+Communes perdues par NA : 0
+-> Phrase prête : 'Sur N = 944 communes de +10 000 hab., en moyenne 1.41 collège privé par commune,
+   37.4% n'en ont aucun : variable de comptage avec masse à zéro -> modèle de comptage (big N, T=1).'
+N = 944 communes | y = nb_colleges_prives : moyenne = 1.405, variance = 4.916, Var/Moy = 3.50
+Zéros = 353 communes (37.4%) | min = 0 | max = 19
+Communes perdues par NA : 0
+-> Phrase prête : 'Sur N = 944 communes de +10 000 hab., en moyenne 1.41 collège privé par commune,
+   37.4% n'en ont aucun : variable de comptage avec masse à zéro -> modèle de comptage (big N, T=1).'
+
+############################################################
+## [P2-DONNEES] Données et descriptives
+############################################################
+Variables du modèle M4 :z_theil, z_exposition_riches, z_polarisation, z_part_pop_top10, z_segregation_multidim, log_pop, log_rev, taux_pauv_commune, nb_colleges_publics, dist_college_public_km, nb_prives_5km_autres
+
+Distribution complète de y :
