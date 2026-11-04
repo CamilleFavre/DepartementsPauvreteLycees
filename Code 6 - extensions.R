@@ -1,5 +1,7 @@
 # =====================================================================
-# CODE 7 FINAL - EXTENSIONS MARGOLIS (count data) - checkpoints inclus
+# CODE 7 FINAL v2 - EXTENSIONS MARGOLIS (count data) - avec checkpoints
+# Changements v2 : 4 indices de ségrégation ; MC sur z_moran (DGP = coefs M4) ;
+#   f_cv depuis formules$M4 ; bootstrap aussi sur z_moran ; MASS::glm.nb.
 # En cas de crash, recharger le dernier checkpoint :
 #   cp <- readRDS(file.path(DOSSIER_OUT, "code7_2_boot.rds"))
 # =====================================================================
@@ -7,6 +9,7 @@ library(arrow); library(dplyr); library(sandwich); library(lmtest)
 library(pscl); library(AER); library(MASS); library(sf); library(ggplot2)
 library(spdep); library(parallel)
 if (requireNamespace("spatialreg", quietly = TRUE)) library(spatialreg)
+select <- dplyr::select          # MASS masque dplyr::select
 set.seed(2026)
 
 os_name <- Sys.info()[["sysname"]]
@@ -46,7 +49,7 @@ CK("0_data", list(d_mod = d_mod, modeles = modeles, formules = formules))
 cat("Checkpoint 0 OK\n")
 
 # ---------------------------------------------------------------------
-# 1. TESTS DE SPÉCIFICATION
+# 1. TESTS DE SPÉCIFICATION (CT, Van den Broek, Vuong manuel)
 # ---------------------------------------------------------------------
 mu  <- fitted(m_p)
 ct2 <- dispersiontest(m_p, trafo = 2)
@@ -56,12 +59,14 @@ p_vdB <- 2 * pnorm(-abs(vdB))
 
 m_hp    <- modeles$Hurdle_Pois
 ll_pois <- dpois(d_mod$y, mu, log = TRUE)
-pi_i <- pmin(pmax(predict(m_hp, type = "zero"), 1e-10), 1 - 1e-10)
-mu_i <- predict(m_hp, type = "count")
-ll_h <- ifelse(d_mod$y == 0, log(pi_i), log(1 - pi_i) + dpois(d_mod$y, mu_i, log = TRUE))
-m_i  <- ll_h - ll_pois
-vuong_stat <- sum(m_i) / (sqrt(length(m_i)) * sd(m_i))
-p_vuong <- 2 * pnorm(-abs(vuong_stat))
+if (!is.null(m_hp)) {
+  pi_i <- pmin(pmax(predict(m_hp, type = "zero"), 1e-10), 1 - 1e-10)   # anti-NaN
+  mu_i <- predict(m_hp, type = "count")
+  ll_h <- ifelse(d_mod$y == 0, log(pi_i), log(1 - pi_i) + dpois(d_mod$y, mu_i, log = TRUE))
+  m_i  <- ll_h - ll_pois
+  vuong_stat <- sum(m_i) / (sqrt(length(m_i)) * sd(m_i))
+  p_vuong <- 2 * pnorm(-abs(vuong_stat))
+} else { vuong_stat <- NA_real_; p_vuong <- NA_real_ }
 
 tab_spec <- data.frame(
   test = c("Cameron-Trivedi alpha (trafo=2)", "Van den Broek (excès de zéros)", "Vuong Hurdle-Pois vs Poisson"),
@@ -74,6 +79,7 @@ cat("Checkpoint 1 OK\n")
 
 # ---------------------------------------------------------------------
 # 2. ÉCART beta(M4)-beta(M3) : delta method + bootstrap clusteré B=500
+#    (sur z_exposition_riches pour tab_boot ; z_moran aussi sauvegardé)
 # ---------------------------------------------------------------------
 m3  <- glm(formules$M3, family = poisson, data = d_mod)
 b3  <- coef(m3)["z_exposition_riches"]; b4 <- coef(m_p)["z_exposition_riches"]
@@ -86,7 +92,8 @@ diff_obs <- b4 - b3
 
 B <- 500
 clus4 <- split(seq_len(nrow(d_mod)), d_mod$region_acad)
-boot_diff <- rep(NA_real_, B)
+boot_diff  <- rep(NA_real_, B)
+boot_moran <- rep(NA_real_, B)
 set.seed(7)
 pb <- txtProgressBar(max = B, style = 3)
 for (b in seq_len(B)) {
@@ -96,10 +103,14 @@ for (b in seq_len(B)) {
   if (!is.null(m4b) && !is.null(m3b) &&
       "z_exposition_riches" %in% names(coef(m4b)) && "z_exposition_riches" %in% names(coef(m3b)))
     boot_diff[b] <- coef(m4b)["z_exposition_riches"] - coef(m3b)["z_exposition_riches"]
+  if (!is.null(m4b) && !is.null(m3b) &&
+      "z_moran" %in% names(coef(m4b)) && "z_moran" %in% names(coef(m3b)))
+    boot_moran[b] <- coef(m4b)["z_moran"] - coef(m3b)["z_moran"]
   setTxtProgressBar(pb, b)
 }
 close(pb)
-boot_diff <- boot_diff[!is.na(boot_diff)]
+boot_diff  <- boot_diff[!is.na(boot_diff)]
+boot_moran <- boot_moran[!is.na(boot_moran)]
 ic_boot <- quantile(boot_diff, c(.025, .975))
 tab_boot <- data.frame(
   estimateur = c("delta method", "bootstrap cluster B=500"),
@@ -116,30 +127,34 @@ p <- ggplot(data.frame(d = boot_diff), aes(d)) +
   theme_minimal(base_size = 11) +
   labs(x = expression(beta[M4] - beta[M3]), title = "Bootstrap clusteré : écart de coef (z_exposition_riches)")
 ggsave(file.path(DOSSIER_OUT, "fig_boot_diff.png"), p, width = 8, height = 5, dpi = 150)
-CK("2_boot", list(tab_boot = tab_boot, boot_diff = boot_diff))
+CK("2_boot", list(tab_boot = tab_boot, boot_diff = boot_diff, boot_moran = boot_moran))
 cat("Checkpoint 2 OK\n")
 
 # ---------------------------------------------------------------------
-# 3. MONTE CARLO M=200, parallèle (parSapply)
+# 3. MONTE CARLO M=200, parallèle - DGP = coefficients arrondis de M4
 # ---------------------------------------------------------------------
-Xv <- model.matrix(~ z_exposition_riches + log_pop + log_rev + z_theil, data = d_mod)
-beta_vrai <- c("(Intercept)" = -1.2, z_exposition_riches = 0.035,
-               log_pop = 0.9, log_rev = 1.0, z_theil = 0.10)
+PARAM <- "z_moran"    # paramètre suivi (significatif en M4) ; "z_exposition_riches" pour l'ancien
+Xv <- model.matrix(~ z_theil + z_moran + z_exposition_riches + z_polarisation +
+                     log_pop + log_rev, data = d_mod)
+beta_vrai <- setNames(round(coef(m_p)[colnames(Xv)], 2), colnames(Xv))
+beta_star <- unname(beta_vrai[PARAM])
+cat("Paramètre suivi :", PARAM, "| beta* =", beta_star, "\n")
 n <- nrow(d_mod)
 sim_once <- function(dgp_nb2, size_nb = 1.5) {
   mu <- exp(as.vector(Xv %*% beta_vrai))
   y  <- if (dgp_nb2) rnbinom(n, mu = mu, size = size_nb) else rpois(n, mu)
   df <- data.frame(y = y, Xv[, -1, drop = FALSE])
-  mp <- glm(y ~ ., family = poisson, data = df)
-  out <- c(b_pois = unname(coef(mp)["z_exposition_riches"]),
-           se_pois = unname(sqrt(diag(vcov(mp)))["z_exposition_riches"]),
+  mp <- tryCatch(glm(y ~ ., family = poisson, data = df), error = function(e) NULL)
+  if (is.null(mp)) return(c(b_pois = NA_real_, se_pois = NA_real_, b_nb = NA_real_, se_nb = NA_real_))
+  out <- c(b_pois  = unname(coef(mp)[PARAM]),
+           se_pois = sqrt(diag(vcov(mp)))[PARAM],
            b_nb = NA_real_, se_nb = NA_real_)
   if (dgp_nb2) {
-    mn <- tryCatch(glm.nb(y ~ ., data = df, control = glm.control(maxit = 100, epsilon = 1e-6)),
-                   error = function(e) NULL)
-    if (!is.null(mn) && "z_exposition_riches" %in% names(coef(mn))) {
-      out["b_nb"]  <- unname(coef(mn)["z_exposition_riches"])
-      out["se_nb"] <- unname(sqrt(diag(vcov(mn)))["z_exposition_riches"])
+    mn <- tryCatch(MASS::glm.nb(y ~ ., data = df, control = glm.control(maxit = 100, epsilon = 1e-6)),
+                   error = function(e) NULL)   # MASS:: car les workers n'ont pas MASS chargé
+    if (!is.null(mn) && PARAM %in% names(coef(mn))) {
+      out["b_nb"]  <- unname(coef(mn)[PARAM])
+      out["se_nb"] <- sqrt(diag(vcov(mn)))[PARAM]
     }
   }
   out
@@ -147,7 +162,7 @@ sim_once <- function(dgp_nb2, size_nb = 1.5) {
 M <- 200
 ncores <- max(1, detectCores() - 1)
 cl <- makeCluster(ncores)
-clusterExport(cl, c("Xv", "beta_vrai", "n", "sim_once"))
+clusterExport(cl, c("Xv", "beta_vrai", "n", "sim_once", "PARAM"))
 mc_pois_dgp <- parSapply(cl, seq_len(M), function(i) sim_once(FALSE))
 mc_nb_dgp   <- parSapply(cl, seq_len(M), function(i) sim_once(TRUE))
 stopCluster(cl)
@@ -158,16 +173,16 @@ s <- function(x) sd(x, na.rm = TRUE)
 tab_mc <- data.frame(
   dgp = rep(c("Poisson", "NB2 (size=1.5)"), each = 2),
   estimateur = rep(c("Poisson", "NB2"), 2),
-  biais   = c(g(mc_pois_dgp["b_pois", ]) - .035, g(mc_pois_dgp["b_nb", ]) - .035,
-              g(mc_nb_dgp["b_pois", ])   - .035, g(mc_nb_dgp["b_nb", ])   - .035),
+  biais   = c(g(mc_pois_dgp["b_pois", ]) - beta_star, g(mc_pois_dgp["b_nb", ]) - beta_star,
+              g(mc_nb_dgp["b_pois", ])   - beta_star, g(mc_nb_dgp["b_nb", ])   - beta_star),
   sd_emp  = c(s(mc_pois_dgp["b_pois", ]), s(mc_pois_dgp["b_nb", ]),
               s(mc_nb_dgp["b_pois", ]),   s(mc_nb_dgp["b_nb", ])),
   mean_se = c(g(mc_pois_dgp["se_pois", ]), g(mc_pois_dgp["se_nb", ]),
               g(mc_nb_dgp["se_pois", ]),   g(mc_nb_dgp["se_nb", ])),
-  couv95  = c(mean(abs(mc_pois_dgp["b_pois", ] - .035) < 1.96 * mc_pois_dgp["se_pois", ], na.rm = TRUE),
-              mean(abs(mc_pois_dgp["b_nb", ]   - .035) < 1.96 * mc_pois_dgp["se_nb", ],   na.rm = TRUE),
-              mean(abs(mc_nb_dgp["b_pois", ]   - .035) < 1.96 * mc_nb_dgp["se_pois", ],   na.rm = TRUE),
-              mean(abs(mc_nb_dgp["b_nb", ]     - .035) < 1.96 * mc_nb_dgp["se_nb", ],     na.rm = TRUE))
+  couv95  = c(mean(abs(mc_pois_dgp["b_pois", ] - beta_star) < 1.96 * mc_pois_dgp["se_pois", ], na.rm = TRUE),
+              mean(abs(mc_pois_dgp["b_nb", ]   - beta_star) < 1.96 * mc_pois_dgp["se_nb", ],   na.rm = TRUE),
+              mean(abs(mc_nb_dgp["b_pois", ]   - beta_star) < 1.96 * mc_nb_dgp["se_pois", ],   na.rm = TRUE),
+              mean(abs(mc_nb_dgp["b_nb", ]     - beta_star) < 1.96 * mc_nb_dgp["se_nb", ],     na.rm = TRUE))
 ) %>% mutate(across(where(is.numeric), ~ round(., 4)))
 print(tab_mc)
 write.csv(tab_mc, file.path(DOSSIER_OUT, "tab_mc.csv"), row.names = FALSE)
@@ -175,17 +190,17 @@ mc_df <- data.frame(b = c(mc_pois_dgp["b_pois", ], mc_pois_dgp["b_nb", ],
                           mc_nb_dgp["b_pois", ], mc_nb_dgp["b_nb", ]),
                     dgp = rep(c("DGP Poisson", "DGP Poisson", "DGP NB2", "DGP NB2"), each = M),
                     est = rep(c("Poisson", "NB2"), 2, each = M))
-p <- ggplot(mc_df, aes(b, fill = est)) +
+p_mc <- ggplot(mc_df, aes(b, fill = est)) +
   geom_histogram(alpha = 0.5, bins = 40, position = "identity") +
-  geom_vline(xintercept = 0.035, color = "red", linetype = "dashed") +
+  geom_vline(xintercept = beta_star, color = "red", linetype = "dashed") +
   facet_wrap(~ dgp) + theme_minimal(base_size = 10) +
-  labs(x = expression(hat(beta)), title = "Monte Carlo M=200 : vraie valeur = 0.035 (rouge)")
-ggsave(file.path(DOSSIER_OUT, "fig_mc_count.png"), p, width = 10, height = 5, dpi = 150)
-CK("3_mc", list(tab_mc = tab_mc, pois = mc_pois_dgp, nb = mc_nb_dgp))
+  labs(x = paste0("hat(beta) de ", PARAM), title = paste("Monte Carlo M=200 : vraie valeur =", beta_star))
+ggsave(file.path(DOSSIER_OUT, "fig_mc_count.png"), p_mc, width = 10, height = 5, dpi = 150)
+CK("3_mc", list(tab_mc = tab_mc, pois = mc_pois_dgp, nb = mc_nb_dgp, beta_star = beta_star, PARAM = PARAM))
 cat("Checkpoint 3 OK\n")
 
 # ---------------------------------------------------------------------
-# 4. SPATIAL COMMUNAL : Moran, SAR, CV blocs
+# 4. SPATIAL COMMUNAL : Moran I des résidus, SAR (tryCatch), CV par blocs
 # ---------------------------------------------------------------------
 d_sp   <- d_mod[complete.cases(d_mod[, c("x_pop", "y_pop")]), ]
 coords <- as.matrix(d_sp[, c("x_pop", "y_pop")])
@@ -201,9 +216,7 @@ m_sar <- tryCatch(
   else spdep::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE),
   error = function(e) { message("SAR non estimé : ", e$message); NULL })
 
-f_cv <- reformulate(c("z_exposition_riches", "z_theil", "z_polarisation", "log_pop",
-                      "log_rev", "taux_pauv_commune", "nb_colleges_publics",
-                      "nb_prives_5km_autres"), response = "y")
+f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")  # inclut z_moran
 set.seed(1)
 bloc <- kmeans(scale(coords), centers = 10)$cluster
 err_sp <- sapply(sort(unique(bloc)), function(b) {
@@ -221,11 +234,11 @@ tab_cv <- data.frame(methode = c("CV blocs spatiaux (k-means k=10)", "CV aléato
                      mse = c(mean(err_sp), mean(err_rd)))
 print(tab_cv)
 write.csv(tab_cv, file.path(DOSSIER_OUT, "tab_cv.csv"), row.names = FALSE)
-p <- ggplot(tab_cv, aes(methode, mse, fill = methode)) +
+p_cv <- ggplot(tab_cv, aes(methode, mse, fill = methode)) +
   geom_col(width = 0.5) + geom_text(aes(label = round(mse, 3)), vjust = -0.5) +
   theme_minimal(base_size = 11) + theme(legend.position = "none") +
   labs(x = NULL, y = "MSE", title = "CV spatial vs aléatoire : le CV aléatoire sous-estime l'erreur")
-ggsave(file.path(DOSSIER_OUT, "fig_cv_communes.png"), p, width = 7, height = 5, dpi = 150)
+ggsave(file.path(DOSSIER_OUT, "fig_cv_communes.png"), p_cv, width = 7, height = 5, dpi = 150)
 CK("4_spatial", list(tab_cv = tab_cv, moran = mt, m_sar = m_sar, bloc = bloc))
 cat("Checkpoint 4 OK\n")
 
@@ -233,7 +246,8 @@ cat("Checkpoint 4 OK\n")
 # 5. SAUVEGARDE FINALE
 # ---------------------------------------------------------------------
 saveRDS(list(tab_spec = tab_spec, tab_boot = tab_boot, tab_mc = tab_mc, tab_cv = tab_cv,
-             moran = mt, m_sar = m_sar, boot_diff = boot_diff,
-             mc_raw = list(pois = mc_pois_dgp, nb = mc_nb_dgp)),
+             moran = mt, m_sar = m_sar, boot_diff = boot_diff, boot_moran = boot_moran,
+             mc_raw = list(pois = mc_pois_dgp, nb = mc_nb_dgp),
+             PARAM = PARAM, beta_star = beta_star),
         file.path(DOSSIER_OUT, "code7.rds"))
-cat("Code 7 FINAL terminé : code7.rds + tab_spec/tab_boot/tab_mc/tab_cv.csv + 3 fig + checkpoints\n")
+cat("Code 7 v2 terminé : code7.rds + tab_spec/tab_boot/tab_mc/tab_cv.csv + 3 figs + checkpoints\n")

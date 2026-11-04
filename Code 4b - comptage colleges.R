@@ -123,29 +123,20 @@ d <- d %>%
          z_theil = as.numeric(scale(theil_revenu)),
          z_moran = as.numeric(scale(moran_I_rev)))
 
-rhs <- function(x) paste(x, collapse = " + ")
-
-X_TAILLE  <- "log_pop"
-X_CTRL    <- c("log_rev", "taux_pauv_commune", "nb_colleges_publics",
-               "dist_college_public_km", "nb_prives_5km_autres")
-X_SEG_BASE <- c("z_theil", "z_moran")
-X_SEG_NEW  <- c("z_exposition_riches", "z_polarisation", "z_part_pop_top10", "z_segregation_multidim")
+X_TAILLE <- "log_pop"
+X_CTRL   <- c("log_rev", "taux_pauv_commune", "nb_colleges_publics",
+              "dist_college_public_km", "nb_prives_5km_autres")
+# >>> LES 4 SEULS INDICES DE SÉGRÉGATION SPATIALE <<<
+X_SEG    <- c("z_theil", "z_moran", "z_exposition_riches", "z_polarisation")
 
 formules <- list(
-  M0  = reformulate("z_theil", response = "y"),
-  M1  = reformulate(c("z_theil", X_TAILLE), response = "y"),
-  M2  = reformulate(c(X_SEG_BASE, X_TAILLE, X_CTRL), response = "y"),
-  M3  = reformulate(c("z_theil", "z_exposition_riches", "z_polarisation",
-                      "z_part_pop_top10", X_TAILLE, X_CTRL), response = "y"),
-  M3b = reformulate(c("z_theil", "z_getis_ord_riches", "z_polarisation",
-                      "z_part_pop_top10", X_TAILLE, X_CTRL), response = "y"),
-  M3c = reformulate(c("z_segregation_multidim", "z_polarisation",
-                      "z_part_pop_top10", X_TAILLE, X_CTRL), response = "y"),
-  M3d = reformulate(c("z_theil", "z_entropie_diversite", "z_diversite_binaire",
-                      X_TAILLE, X_CTRL), response = "y"),
-  M4  = reformulate(c("z_theil", "z_exposition_riches", "z_polarisation",
-                      "z_part_pop_top10", "z_segregation_multidim",
-                      X_TAILLE, X_CTRL, "region_acad"), response = "y")
+  M0  = reformulate("z_theil", response = "y"),                                   # niveau d'inégalité seul
+  M1  = reformulate(c("z_theil", X_TAILLE), response = "y"),                       # + taille
+  M2  = reformulate(c("z_theil", "z_moran", X_TAILLE, X_CTRL), response = "y"),    # + Moran (hubs) + contrôles
+  M3  = reformulate(c(X_SEG, X_TAILLE, X_CTRL), response = "y"),                   # les 4 indices + contrôles
+  M3b = reformulate(c("z_moran", "z_exposition_riches", "z_polarisation",
+                      X_TAILLE, X_CTRL), response = "y"),                        # variante : spatial seul (sans Theil)
+  M4  = reformulate(c(X_SEG, X_TAILLE, X_CTRL, "region_acad"), response = "y")     # M3 + FE région académique
 )
 
 vars_utiles <- unique(c("y", "dept", "academie", "region_acad",
@@ -181,8 +172,8 @@ print(coef_robuste(fit_pois$M4, d_mod$region_acad))
 # ---------------------------------------------------------------------
 # 5. STABILITÉ DES COEFFICIENTS
 # ---------------------------------------------------------------------
-vars_stab <- c("z_theil", "z_moran", "z_exposition_riches", "z_polarisation",
-               "z_part_pop_top10", "z_segregation_multidim")
+vars_stab <- c("z_theil","z_moran","z_exposition_riches","z_polarisation")
+
 get_row <- function(ct, v) if (v %in% rownames(ct)) ct[v, ] else c(NA, NA, NA, NA)
 tab_stab <- do.call(rbind, lapply(names(fit_pois), function(nm) {
   ct <- coef_robuste(fit_pois[[nm]], cluster_de(nm))
