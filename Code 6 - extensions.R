@@ -2,6 +2,11 @@
 # CODE 7 FINAL v2 - EXTENSIONS MARGOLIS (count data) - avec checkpoints
 # Changements v2 : 4 indices de ségrégation ; MC sur z_moran (DGP = coefs M4) ;
 #   f_cv depuis formules$M4 ; bootstrap aussi sur z_moran ; MASS::glm.nb.
+# PATCHS VILLE (regroupement PLM 75056/69123/13055) :
+#   - map_plm() applique aux centroïdes en §0  -> "Centroïdes manquants : 0"
+#   - Vuong : terme de troncature -log(1-f(0)) ajouté pour y>0
+#   - MC : Xv = design complet de M4 hors FE ; clusterEvalQ(stats)
+#   - SAR : affichage de rho + SE + p
 # En cas de crash, recharger le dernier checkpoint :
 #   cp <- readRDS(file.path(DOSSIER_OUT, "code7_2_boot.rds"))
 # =====================================================================
@@ -23,6 +28,16 @@ if (os_name == "Windows") {
 DOSSIER_ECO <- file.path(DOSSIER_OUT, "data_eco")
 CK <- function(nom, obj) saveRDS(obj, file.path(DOSSIER_OUT, paste0("code7_", nom, ".rds")))
 
+# Fusion arrondissements PLM -> ville (identique Code 2 v2 / Code 2c / Code 3b)
+map_plm <- function(code) {
+  dplyr::case_when(
+    grepl("^751(0[1-9]|1[0-9]|20)$", code) ~ "75056",
+    grepl("^6938[1-9]$", code)             ~ "69123",
+    grepl("^132(0[1-9]|1[0-6])$", code)    ~ "13055",
+    TRUE ~ code
+  )
+}
+
 charg    <- readRDS(file.path(DOSSIER_OUT, "modeles_comptage.rds"))
 d_mod    <- charg$d_mod
 modeles  <- charg$modeles
@@ -31,20 +46,20 @@ m_p      <- modeles$Poisson
 cat("N =", nrow(d_mod), "| modeles :", paste(names(modeles), collapse = ", "), "\n")
 
 # ---------------------------------------------------------------------
-# 0. CENTROÏDES COMMUNAUX
+# 0. CENTROÏDES COMMUNAUX (niveau VILLE : map_plm sur lcog_geo)
 # ---------------------------------------------------------------------
 DEMI_CARREAU <- 100
 files_eco <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$", full.names = TRUE)
 centroides <- bind_rows(lapply(files_eco, function(f) {
   read_parquet(f, col_select = c("lcog_geo", "x_l93", "y_l93", "ind")) %>%
-    mutate(code_insee = substr(as.character(lcog_geo), 1, 5)) %>%
+    mutate(code_insee = map_plm(substr(as.character(lcog_geo), 1, 5))) %>%
     filter(code_insee %in% d_mod$code_insee, is.finite(ind), ind > 0) %>%
     group_by(code_insee) %>%
     summarise(x_pop = weighted.mean(x_l93 + DEMI_CARREAU, ind),
               y_pop = weighted.mean(y_l93 + DEMI_CARREAU, ind), .groups = "drop")
 }))
 d_mod <- d_mod %>% left_join(centroides, by = "code_insee")
-cat("Centroïdes manquants :", sum(is.na(d_mod$x_pop)), "\n")
+cat("Centroïdes manquants :", sum(is.na(d_mod$x_pop)), "\n")   # attendu : 0
 CK("0_data", list(d_mod = d_mod, modeles = modeles, formules = formules))
 cat("Checkpoint 0 OK\n")
 
@@ -62,7 +77,9 @@ ll_pois <- dpois(d_mod$y, mu, log = TRUE)
 if (!is.null(m_hp)) {
   pi_i <- pmin(pmax(predict(m_hp, type = "zero"), 1e-10), 1 - 1e-10)   # anti-NaN
   mu_i <- predict(m_hp, type = "count")
-  ll_h <- ifelse(d_mod$y == 0, log(pi_i), log(1 - pi_i) + dpois(d_mod$y, mu_i, log = TRUE))
+  # log-vraisemblance hurdle-Poisson : y=0 -> log(pi) ; y>0 -> log(1-pi) + log f(y) - log(1 - f(0))
+  ll_h <- ifelse(d_mod$y == 0, log(pi_i),
+                 log(1 - pi_i) + dpois(d_mod$y, mu_i, log = TRUE) - dpois(0, mu_i, log = TRUE))
   m_i  <- ll_h - ll_pois
   vuong_stat <- sum(m_i) / (sqrt(length(m_i)) * sd(m_i))
   p_vuong <- 2 * pnorm(-abs(vuong_stat))
@@ -131,14 +148,15 @@ CK("2_boot", list(tab_boot = tab_boot, boot_diff = boot_diff, boot_moran = boot_
 cat("Checkpoint 2 OK\n")
 
 # ---------------------------------------------------------------------
-# 3. MONTE CARLO M=200, parallèle - DGP = coefficients arrondis de M4
+# 3. MONTE CARLO M=200, parallèle - DGP = coefficients arrondis de M4 (hors FE)
 # ---------------------------------------------------------------------
-PARAM <- "z_moran"    # paramètre suivi (significatif en M4) ; "z_exposition_riches" pour l'ancien
-Xv <- model.matrix(~ z_theil + z_moran + z_exposition_riches + z_polarisation +
-                     log_pop + log_rev, data = d_mod)
+PARAM <- "z_moran"    # paramètre suivi (significatif en M4)
+# design du MC = toutes les variables de M4 hors FE région académique
+Xv <- model.matrix(reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")),
+                               response = "y"), data = d_mod)
 beta_vrai <- setNames(round(coef(m_p)[colnames(Xv)], 2), colnames(Xv))
 beta_star <- unname(beta_vrai[PARAM])
-cat("Paramètre suivi :", PARAM, "| beta* =", beta_star, "\n")
+cat("Paramètre suivi :", PARAM, "| beta* =", beta_star, "\n")   # attendu : z_moran | 0.13
 n <- nrow(d_mod)
 sim_once <- function(dgp_nb2, size_nb = 1.5) {
   mu <- exp(as.vector(Xv %*% beta_vrai))
@@ -162,6 +180,8 @@ sim_once <- function(dgp_nb2, size_nb = 1.5) {
 M <- 200
 ncores <- max(1, detectCores() - 1)
 cl <- makeCluster(ncores)
+clusterEvalQ(cl, library(stats))                 # glm/vcov dispo dans les workers
+parallel::clusterSetRNGStream(cl, 2026)          # reproductibilité du MC
 clusterExport(cl, c("Xv", "beta_vrai", "n", "sim_once", "PARAM"))
 mc_pois_dgp <- parSapply(cl, seq_len(M), function(i) sim_once(FALSE))
 mc_nb_dgp   <- parSapply(cl, seq_len(M), function(i) sim_once(TRUE))
@@ -215,6 +235,11 @@ m_sar <- tryCatch(
     spatialreg::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE)
   else spdep::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE),
   error = function(e) { message("SAR non estimé : ", e$message); NULL })
+if (!is.null(m_sar)) {
+  sm <- summary(m_sar)$Coef
+  cat(sprintf("SAR rho = %.4f | SE = %.4f | p = %.4g\n",
+              unname(coef(m_sar)["rho"]), sm["rho", "Std. Error"], sm["rho", "Pr(>|z|)"]))
+}
 
 f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")  # inclut z_moran
 set.seed(1)

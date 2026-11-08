@@ -32,7 +32,7 @@ if (os_name == "Windows") {
 # Dérivation automatique du dossier ECO (gère les barres de manière propre selon l'OS)
 DOSSIER_ECO <- file.path(DOSSIER_OUT, "data_eco")
 
-AGREGER_PLM  <- FALSE
+AGREGER_PLM  <- TRUE
 RAYON_KM     <- 5          # <- collège : marché local
 DEMI_CARREAU <- 100
 

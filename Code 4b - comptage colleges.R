@@ -3,6 +3,9 @@
 # + indicateurs de ségrégation complémentaires (Code 2c)
 # Entrée  : df_analyse_colleges.parquet + df_segregation_complementaire.parquet
 # Sortie  : modeles_comptage.rds
+# PATCHS : §1 blindé (supprime les colonnes 2c existantes, garde-fou niveau PLM)
+#          §2 map_plm sur les centroïdes ; §8 rhs_txt (pas rhs()) ;
+#          §6 LRT des FE en plus du Wald (artefact) ; rds enrichi (lrt_fe, vars_stab)
 # =====================================================================
 library(arrow); library(dplyr); library(sandwich); library(lmtest)
 library(pscl); library(AER); library(sf); library(stringi); library(stringr)
@@ -23,13 +26,34 @@ if (os_name == "Windows") {
 VAR_Y <- "nb_colleges_prives"
 set.seed(2025)
 
+# Fusion arrondissements PLM -> ville (identique Code 2 v2 / 2c / 3b)
+map_plm <- function(code) {
+  dplyr::case_when(
+    grepl("^751(0[1-9]|1[0-9]|20)$", code) ~ "75056",
+    grepl("^6938[1-9]$", code)             ~ "69123",
+    grepl("^132(0[1-9]|1[0-6])$", code)    ~ "13055",
+    TRUE ~ code)
+}
+
 # ---------------------------------------------------------------------
-# 1. LECTURE + JOINTURE INDICATEURS SÉGRÉGATION (Code 2c)
+# 1. LECTURE + JOINTURE INDICATEURS SÉGRÉGATION (Code 2c) — VERSION BLINDÉE
 # ---------------------------------------------------------------------
 d <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
 df_segreg <- read_parquet(file.path(DOSSIER_OUT, "df_segregation_complementaire.parquet"))
+
+cat("N analyse_colleges =", nrow(d), "| N seg =", nrow(df_segreg), "\n")
+plm_d <- sort(unique(d$code_insee[grepl("^751|^6938|^132", d$code_insee)]))
+cat("codes PLM dans analyse_colleges :", paste(plm_d, collapse = " "), "\n")
+# GARDE-FOU : 75101/69381/13201 => Code 3b pas re-tourné avec AGREGER_PLM=TRUE
+stopifnot(all(plm_d %in% c("75056", "69123", "13055")))
+
+# retirer TOUTES les colonnes 2c déjà présentes dans d (même suffixées .x/.y)
+d <- d %>% select(-matches(
+  "^(n_carreaux_utilises|exposition_riches|entropie_diversite|diversite_binaire|polarisation|part_pop_top10|part_pop_bottom10|part_pop_top20|part_pop_bottom20|dist_moy_carreau_riche|dist_moy_carreau_pauvre|getis_ord_riches|segregation_multidim|z_exposition_riches|z_entropie_diversite|z_diversite_binaire|z_polarisation|z_part_pop_top10|z_part_pop_bottom10|z_part_pop_top20|z_part_pop_bottom20|z_dist_moy_carreau_riche|z_dist_moy_carreau_pauvre|z_getis_ord_riches|z_segregation_multidim)(\\.[xy])?$"))
+
 d <- d %>% left_join(df_segreg, by = "code_insee")
-cat("Communes avec indicateurs 2c :", sum(!is.na(d$z_exposition_riches)), "/", nrow(d), "\n")
+stopifnot("z_exposition_riches" %in% names(d), "z_polarisation" %in% names(d))
+cat("Villes avec indicateurs 2c :", sum(!is.na(d$z_exposition_riches)), "/", nrow(d), "\n")
 
 # ---------------------------------------------------------------------
 # 2. ACADÉMIE (fine) + RÉGION ACADÉMIQUE (13, pour FE/cluster)
@@ -44,7 +68,7 @@ DEMI_CARREAU <- 100
 files_eco <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$", full.names = TRUE)
 centroides <- bind_rows(lapply(files_eco, function(f) {
   read_parquet(f, col_select = c("lcog_geo","x_l93","y_l93","ind")) %>%
-    mutate(code_insee = substr(as.character(lcog_geo), 1, 5)) %>%
+    mutate(code_insee = map_plm(substr(as.character(lcog_geo), 1, 5))) %>%   # PATCH map_plm
     filter(code_insee %in% d$code_insee, is.finite(ind), ind > 0) %>%
     group_by(code_insee) %>%
     summarise(x = weighted.mean(x_l93 + DEMI_CARREAU, ind),
@@ -130,13 +154,13 @@ X_CTRL   <- c("log_rev", "taux_pauv_commune", "nb_colleges_publics",
 X_SEG    <- c("z_theil", "z_moran", "z_exposition_riches", "z_polarisation")
 
 formules <- list(
-  M0  = reformulate("z_theil", response = "y"),                                   # niveau d'inégalité seul
-  M1  = reformulate(c("z_theil", X_TAILLE), response = "y"),                       # + taille
-  M2  = reformulate(c("z_theil", "z_moran", X_TAILLE, X_CTRL), response = "y"),    # + Moran (hubs) + contrôles
-  M3  = reformulate(c(X_SEG, X_TAILLE, X_CTRL), response = "y"),                   # les 4 indices + contrôles
+  M0  = reformulate("z_theil", response = "y"),
+  M1  = reformulate(c("z_theil", X_TAILLE), response = "y"),
+  M2  = reformulate(c("z_theil", "z_moran", X_TAILLE, X_CTRL), response = "y"),
+  M3  = reformulate(c(X_SEG, X_TAILLE, X_CTRL), response = "y"),
   M3b = reformulate(c("z_moran", "z_exposition_riches", "z_polarisation",
-                      X_TAILLE, X_CTRL), response = "y"),                        # variante : spatial seul (sans Theil)
-  M4  = reformulate(c(X_SEG, X_TAILLE, X_CTRL, "region_acad"), response = "y")     # M3 + FE région académique
+                      X_TAILLE, X_CTRL), response = "y"),
+  M4  = reformulate(c(X_SEG, X_TAILLE, X_CTRL, "region_acad"), response = "y")
 )
 
 vars_utiles <- unique(c("y", "dept", "academie", "region_acad",
@@ -170,7 +194,7 @@ cat("\n=== POISSON M4 (FE région académique, cluster région) ===\n")
 print(coef_robuste(fit_pois$M4, d_mod$region_acad))
 
 # ---------------------------------------------------------------------
-# 5. STABILITÉ DES COEFFICIENTS
+# 5. STABILITÉ DES COEFFICIENTS (4 indices de ségrégation)
 # ---------------------------------------------------------------------
 vars_stab <- c("z_theil","z_moran","z_exposition_riches","z_polarisation")
 
@@ -185,15 +209,17 @@ tab_stab <- do.call(rbind, lapply(names(fit_pois), function(nm) {
 print(tab_stab, digits = 3)
 
 # ---------------------------------------------------------------------
-# 6. WALD JOINT FE RÉGION ACADÉMIQUE
+# 6. TEST JOINT DES FE : LRT (le Wald clusteré est un artefact numérique -> ne pas rapporter)
 # ---------------------------------------------------------------------
-wt <- tryCatch({
+m3 <- glm(formules$M3, family = poisson, data = d_mod)
+lrt_fe <- anova(m3, fit_pois$M4, test = "Chisq")
+cat("\nLRT FE région académique (M3 vs M4) :\n"); print(lrt_fe)
+wt <- tryCatch({   # conservé pour trace, mais JAMAIS à rapporter
   V <- vcovCL(fit_pois$M4, cluster = d_mod$region_acad, type = "HC1")
   betas <- coef(fit_pois$M4)[grepl("^region_acad", names(coef(fit_pois$M4)))]
   W <- as.numeric(t(betas) %*% solve(V[names(betas), names(betas)]) %*% betas)
-  cat(sprintf("\nWald joint FE région académique : W = %.1f, df = %d, p = %.4g\n",
-              W, length(betas), pchisq(W, length(betas), lower.tail = FALSE)))
-}, error = function(e) message("Wald FE : ", e$message))
+  W
+}, error = function(e) NA_real_)
 
 # ---------------------------------------------------------------------
 # 7. NB2 (M4)
@@ -212,7 +238,8 @@ if (!is.null(m_nb)) {
 # ---------------------------------------------------------------------
 X_COUNT <- setdiff(all.vars(formules$M4), "y")
 X_ZERO  <- X_COUNT
-f_hurdle <- as.formula(paste("y ~", rhs(X_COUNT), "|", rhs(X_ZERO)))
+rhs_txt  <- function(v) paste(v, collapse = " + ")   # remplace rhs() (package Formula non attaché)
+f_hurdle <- as.formula(paste("y ~", rhs_txt(X_COUNT), "|", rhs_txt(X_ZERO)))
 
 m_hnb  <- tryCatch(hurdle(f_hurdle, data = d_mod, dist = "negbin", zero.dist = "binomial"),
                    error = function(e) { message("Hurdle NB : ", e$message); NULL })
@@ -244,7 +271,7 @@ cat("\n--- Fréquences observées vs prédites ---\n")
 print(round(tab_freq, 1), row.names = FALSE)
 
 # ---------------------------------------------------------------------
-# 10. IRR + AME (modèle préféré : Poisson M4)
+# 10. IRR + AME (modèle de référence : Poisson M4)
 # ---------------------------------------------------------------------
 irr_table <- function(m, cluster = d_mod$region_acad) {
   ct <- coef_robuste(m, cluster)
@@ -269,8 +296,8 @@ print(sapply(vars_stab, function(v) ame_num(m_p, d_mod, v)))
 # ---------------------------------------------------------------------
 saveRDS(list(
   d_mod = d_mod, modeles = modeles, formules = formules,
-  tab_stab = tab_stab, tab_freq = tab_freq, wald_fe = wt,
-  ct_nb2 = dispersiontest(m_p, trafo = 2)
+  tab_stab = tab_stab, tab_freq = tab_freq, wald_fe = wt, lrt_fe = lrt_fe,
+  ct_nb2 = dispersiontest(m_p, trafo = 2),
+  vars_stab = vars_stab, X_SEG = X_SEG, X_CTRL = X_CTRL
 ), file.path(DOSSIER_OUT, "modeles_comptage.rds"))
 cat("modeles_comptage.rds écrit.\n")
-

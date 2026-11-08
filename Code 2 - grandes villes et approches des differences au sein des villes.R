@@ -59,7 +59,7 @@ MIN_CARREAUX      <- 30
 DIST_VOISIN       <- 285     # m : couvre les 8 voisins d'un carreau de 200 m
 K_KNN             <- 4       # voisins pour le recours kNN des carreaux isoles
 NSIM              <- 499     # permutations pour le Moran GLOBAL seulement
-AGREGER_PLM       <- FALSE   # TRUE = Paris, Lyon, Marseille en 1 commune
+AGREGER_PLM       <- TRUE   # TRUE = Paris, Lyon, Marseille en 1 commune
 # (Code 3 doit utiliser le MEME niveau pour les lycees)
 
 set.seed(2025)
