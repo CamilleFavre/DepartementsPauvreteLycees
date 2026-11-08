@@ -1,6 +1,9 @@
 # =====================================================================
-# CODE 9 - TABLES LATEX POUR LE .TEX (sortie console uniquement)
-# A lancer APRES Code 4b v3 (modeles_comptage.rds) et Code 7 (code7.rds)
+# CODE 9 v3 - TABLES LATEX POUR LE .TEX (sortie console uniquement)
+# A lancer APRES Code 4b v3 (modeles_comptage.rds, N=925 villes) et Code 7 v2 (code7.rds, Vuong corrigé)
+# PATCHS v3 : en-têtes explicites (tabs 2, 9, 12, 13) ; régions en clair (tab 4) ;
+#   y en entiers (tab 9) ; note CV spatiale en ratio (tab 14) ; vars_stab depuis rds ;
+#   AME avec z_moran ; MC beta_star/PARAM dynamiques ; SAR conditionnel ; note PLM.
 # Copie chaque bloc entre les "% ====" dans ton .tex, compile 2x.
 # =====================================================================
 library(arrow); library(dplyr); library(tidyr); library(sandwich)
@@ -20,6 +23,10 @@ c7    <- tryCatch(readRDS(file.path(DOSSIER_OUT, "code7.rds")), error = function
 d_mod <- charg$d_mod; modeles <- charg$modeles; formules <- charg$formules
 tab_stab <- charg$tab_stab; tab_freq <- charg$tab_freq
 m_p <- modeles$Poisson
+vars_stab <- if (!is.null(charg$vars_stab)) charg$vars_stab else
+  c("z_theil", "z_moran", "z_exposition_riches", "z_polarisation")
+cat("N =", nrow(d_mod), "| vars_stab :", paste(vars_stab, collapse = ", "), "\n")
+if (nrow(d_mod) != 925) cat("!! ATTENTION : rds pas au niveau ville (attendu N=925) — relance le 4b patché d'abord.\n")
 
 H <- function(t) cat("\n\n############################################################\n## ", t,
                      "\n############################################################\n", sep = "")
@@ -75,13 +82,13 @@ var_label <- function(v) {
   out
 }
 
-mods <- intersect(c("M0","M1","M2","M3","M3b","M3c","M3d","M4"), names(formules))
+mods <- intersect(c("M0","M1","M2","M3","M3b","M4"), names(formules))
+note_plm <- "Paris, Lyon et Marseille regroupées en une seule ville (75056 / 69123 / 13055)."
 
 # ================= TABLEAU 1 : spécifications (généré depuis formules) ==========
 section("TABLEAU 1 - Spécifications M0-M4", {
   allv <- setdiff(unique(unlist(lapply(formules[mods], all.vars))), c("y", "region_acad"))
-  ord <- c("z_theil","z_moran","z_exposition_riches","z_getis_ord_riches","z_polarisation",
-           "z_part_pop_top10","z_segregation_multidim","z_entropie_diversite","z_diversite_binaire",
+  ord <- c("z_theil","z_moran","z_exposition_riches","z_polarisation",
            "log_pop","log_rev","taux_pauv_commune","nb_colleges_publics",
            "dist_college_public_km","nb_prives_5km_autres")
   allv <- c(intersect(ord, allv), setdiff(allv, ord))
@@ -95,7 +102,7 @@ section("TABLEAU 1 - Spécifications M0-M4", {
   spec <- rbind(spec, aic_row, fe_row)
   tex_tab(spec, c("Variable", mods), paste0("l", strrep("c", length(mods))),
           "Spécifications M0--M4 (Poisson, log-link)", "tab:spec",
-          note = paste0("N = ", nrow(d_mod), " communes. FE = effets fixes région académique (13 modalités)."))
+          note = paste0("N = ", nrow(d_mod), " villes. FE = effets fixes région académique (13 modalités). ", note_plm))
 })
 
 # ================= TABLEAU 2 : descriptives ======================================
@@ -107,7 +114,10 @@ section("TABLEAU 2 - Descriptives", {
                      Min = f2(sapply(d_mod[vars_m4], min, na.rm = TRUE)),
                      Médiane = f2(sapply(d_mod[vars_m4], median, na.rm = TRUE)),
                      Max = f2(sapply(d_mod[vars_m4], max, na.rm = TRUE)), stringsAsFactors = FALSE)
-  tex_tab(desc, names(desc), "lrrrrr", "Statistiques descriptives (variables de M4)", "tab:desc")
+  # PATCH v3 : en-têtes explicites (sinon check.names produit "Écart.type")
+  tex_tab(desc, c("Variable", "Moyenne", "Écart-type", "Min", "Médiane", "Max"), "lrrrrr",
+          "Statistiques descriptives (variables de M4)", "tab:desc",
+          note = paste0("N = ", nrow(d_mod), " villes. ", note_plm))
 })
 
 # ================= TABLEAU 3 : distribution de y ================================
@@ -115,17 +125,30 @@ section("TABLEAU 3 - Distribution de y", {
   tb <- table(d_mod$y)
   dist <- data.frame(`$y$` = names(tb), Effectif = as.integer(tb), stringsAsFactors = FALSE)
   tex_tab(dist, c("$y$", "Effectif"), "lr",
-          "Distribution du nombre de collèges privés par commune", "tab:dist",
+          "Distribution du nombre de collèges privés par ville", "tab:dist",
           note = paste0("N = ", nrow(d_mod), " ; moyenne = ", f2(mean(d_mod$y)),
                         " ; variance = ", f2(var(d_mod$y)), " ; Var/Moy = ", f2(var(d_mod$y)/mean(d_mod$y)),
-                        " ; zéros = ", f1(100*mean(d_mod$y == 0)), "\\% ; min = ", min(d_mod$y), " ; max = ", max(d_mod$y)))
+                        " ; zéros = ", f1(100*mean(d_mod$y == 0)), "\\% ; min = ", min(d_mod$y), " ; max = ", max(d_mod$y),
+                        " (Paris). ", note_plm))
 })
 
-# ================= TABLEAU 4 : régions ==========================================
+# ================= TABLEAU 4 : régions (noms en clair) ==========================
 section("TABLEAU 4 - Régions académiques", {
   reg <- as.data.frame(table(d_mod$region_acad), stringsAsFactors = FALSE)
-  names(reg) <- c("Région", "n"); reg$Région <- esc(reg$Région)
-  tex_tab(reg, c("Région académique", "n"), "lr", "Répartition par région académique", "tab:reg")
+  names(reg) <- c("code", "n")
+  pretty <- c(auvergne_rhone_alpes = "Auvergne-Rhône-Alpes",
+              bourgogne_franche_comte = "Bourgogne-Franche-Comté",
+              bretagne = "Bretagne", centre_val_de_loire = "Centre-Val de Loire",
+              corse = "Corse", grand_est = "Grand Est",
+              hauts_de_france = "Hauts-de-France", ile_de_france = "Île-de-France",
+              normandie = "Normandie", nouvelle_aquitaine = "Nouvelle-Aquitaine",
+              occitanie = "Occitanie", pays_de_la_loire = "Pays de la Loire",
+              provence_alpes_cote_azur = "Provence-Alpes-Côte d'Azur")
+  stopifnot(all(as.character(reg$code) %in% names(pretty)))
+  reg$Région <- unname(pretty[as.character(reg$code)])
+  tex_tab(reg[, c("Région", "n")], c("Région académique", "n"), "lr",
+          "Répartition par région académique", "tab:reg",
+          note = paste0("N = ", nrow(d_mod), " villes."))
 })
 
 # ================= TABLEAUX 5-6 : coefficients M4 + FE + LRT ====================
@@ -154,8 +177,6 @@ section("TABLEAUX 5-6 - Coefficients M4 (SE cluster, IRR, IC95) et FE", {
 
 # ================= TABLEAU 7 : stabilité M0 -> M4 ===============================
 section("TABLEAU 7 - Stabilité des coefficients de ségrégation", {
-  vars_stab <- c("z_theil","z_moran","z_exposition_riches","z_polarisation",
-                 "z_part_pop_top10","z_segregation_multidim")
   mods_stab <- intersect(mods, unique(tab_stab$modele))
   stab_w <- data.frame(Variable = var_label(vars_stab), stringsAsFactors = FALSE)
   for (m in mods_stab) {
@@ -164,46 +185,70 @@ section("TABLEAU 7 - Stabilité des coefficients de ségrégation", {
     pp <- tab_stab$p[sel][match(vars_stab, tab_stab$variable[sel])]
     stab_w[[m]] <- ifelse(is.na(cf), "--", paste0(f4(cf), stars(pp)))
   }
+  get_stab <- function(m, v) { sel <- tab_stab$modele == m & tab_stab$variable == v
+  if (!any(sel)) return(NA_real_) else tab_stab$coef[sel][1] }
+  note7 <- paste0("*** p<0.001, ** p<0.01, * p<0.05. z_Theil : ", f4(get_stab("M0","z_theil")), stars(tab_stab$p[tab_stab$modele=="M0" & tab_stab$variable=="z_theil"]),
+                  " en M0, ", f4(get_stab("M4","z_theil")), stars(tab_stab$p[tab_stab$modele=="M4" & tab_stab$variable=="z_theil"]),
+                  " en M4 (effet de composition absorbé par log pop). z_Moran : ", f4(get_stab("M4","z_moran")),
+                  stars(tab_stab$p[tab_stab$modele=="M4" & tab_stab$variable=="z_moran"]), " en M4.")
   tex_tab(stab_w, c("Variable", mods_stab), paste0("l", strrep("c", length(mods_stab))),
-          "Coefficients de ségrégation selon le modèle", "tab:stab",
-          note = "*** p<0.001, ** p<0.01, * p<0.05. z_Theil : +0.323*** en M0, non significatif en M4 (effet de composition).")
+          "Coefficients de ségrégation selon le modèle", "tab:stab", note = note7)
 })
 
 # ================= TABLEAU 8 : AIC / BIC ========================================
 section("TABLEAU 8 - Comparaison des modèles", {
-  ta <- data.frame(Modèle = esc(names(modeles)), AIC = f1(sapply(modeles, AIC)),
+  aics <- sapply(modeles, AIC)
+  nb2_deg <- !is.null(modeles$NB2) && (is.null(modeles$NB2$theta) || !is.finite(modeles$NB2$theta) || modeles$NB2$theta > 1e6)
+  zinb_sing <- !is.null(modeles$ZINB) && any(is.na(coef(modeles$ZINB)))
+  aics_ok <- aics; if (nb2_deg && "NB2" %in% names(aics_ok)) aics_ok["NB2"] <- NA_real_
+  best <- names(which.min(aics_ok))
+  ta <- data.frame(Modèle = esc(names(modeles)), AIC = f1(aics),
                    BIC = f1(sapply(modeles, BIC)), logLik = f1(sapply(modeles, logLik)),
                    stringsAsFactors = FALSE)
-  tex_tab(ta, names(ta), "lrrr", "Critères d'information (AIC / BIC)", "tab:aic",
-          note = "NB2 non convergent : AIC = 50 est un artefact. Meilleur modèle : Hurdle-Poisson (AIC = 2260.9).")
+  note8 <- paste0(
+    if (nb2_deg) "NB2 dégénéré (theta -> inf, coefficients = Poisson) : son AIC est un artefact numérique, modèle écarté. " else "",
+    if (zinb_sing) "ZINB numériquement singulier (SE = NA), modèle écarté. " else "",
+    "Meilleur modèle retenu : ", best, " (AIC = ", f1(aics_ok[best]), ").")
+  tex_tab(ta, c("Modèle", "AIC", "BIC", "logLik"), "lrrr", "Critères d'information (AIC / BIC)", "tab:aic", note = note8)
 })
 
-# ================= TABLEAU 9 : fréquences observées vs prédites =================
+# ================= TABLEAU 9 : fréquences observées vs prédites (y entiers) ====
 section("TABLEAU 9 - Fréquences observées vs prédites", {
   tf <- as.data.frame(tab_freq, stringsAsFactors = FALSE)
   if (!"y" %in% names(tf)) tf <- data.frame(y = rownames(tab_freq), tf, stringsAsFactors = FALSE)
+  z_obs <- tf$Observe[which(as.numeric(tf$y) == 0)]
+  z_pois <- if ("Poisson" %in% names(tf)) tf$Poisson[which(as.numeric(tf$y) == 0)] else NA
+  z_hurp <- if ("Hurdle_Pois" %in% names(tf)) tf$Hurdle_Pois[which(as.numeric(tf$y) == 0)] else NA
+  y_int <- as.integer(as.numeric(tf$y))                       # PATCH v3 : y en entiers
   tf[] <- lapply(tf, function(x) if (is.numeric(x)) f1(x) else as.character(x))
-  tex_tab(tf, c("$y$", esc(names(tf)[-1])), paste0("l", strrep("r", ncol(tf)-1)),
+  tf$y <- as.character(y_int)
+  tex_tab(tf, c("$y$", esc(sub("^Observe$", "Observé", names(tf)[-1]))), paste0("l", strrep("r", ncol(tf)-1)),
           "Fréquences observées et prédites (y = 0 à 8+)", "tab:freq",
-          note = "Le hurdle prédit exactement les 353 zéros observés ; le Poisson en prévoit 392.")
+          note = paste0("Zéros observés : ", f0(z_obs), " ; prédits par Hurdle_Pois : ", f0(z_hurp),
+                        " ; par Poisson : ", f0(z_pois), "."))
 })
 
-# ================= TABLEAU 10 : AME ==============================================
+# ================= TABLEAU 10 : AME (4 indices, dont z_moran) ===================
 section("TABLEAU 10 - AME des indicateurs de ségrégation (M4)", {
   ame_num <- function(m, data, var, h = 0.01) {
     d1 <- data; d0 <- data
     d1[[var]] <- d1[[var]] + h/2; d0[[var]] <- d0[[var]] - h/2
     mean((predict(m, d1, type = "response") - predict(m, d0, type = "response"))/h) }
-  vars_ame <- intersect(c("z_theil","z_exposition_riches","z_polarisation",
-                          "z_part_pop_top10","z_segregation_multidim"), all.vars(formules$M4))
+  vars_ame <- intersect(vars_stab, all.vars(formules$M4))   # inclut z_moran
   tame <- data.frame(Variable = var_label(vars_ame),
                      AME = f4(sapply(vars_ame, ame_num, m = m_p, data = d_mod)), stringsAsFactors = FALSE)
-  tex_tab(tame, names(tame), "lr", "Effets marginaux moyens, M4 (différence finie h = 0.01)", "tab:ame",
-          note = "AME en nombre de collèges privés par commune pour +1 écart-type de l'indicateur.")
+  tex_tab(tame, c("Variable", "AME"), "lr", "Effets marginaux moyens, M4 (différence finie h = 0.01)", "tab:ame",
+          note = "AME en nombre de collèges privés par ville pour +1 écart-type de l'indicateur (z-score).")
 })
 
 # ================= TABLEAUX 11-14 : Code 7 (tests, bootstrap, MC, spatial) ======
 if (!is.null(c7)) {
+  cat("champs dans code7.rds :", paste(names(c7), collapse = ", "), "\n")
+  cat("N d_mod =", nrow(d_mod), "| c7$PARAM =", c7$PARAM, "| c7$beta_star =", c7$beta_star, "\n")
+  besoin <- c("tab_spec", "tab_boot", "tab_cv", "moran", "PARAM", "beta_star")
+  if (length(setdiff(besoin, names(c7))) > 0)
+    cat("!! champs manquants :", paste(setdiff(besoin, names(c7)), collapse = ", "),
+        "-> code7.rds trop vieux, relance le Code 7 v2 patché\n")
   
   section("TABLEAU 11 - Tests de spécification", {
     ct1 <- dispersiontest(m_p, trafo = 1)
@@ -213,50 +258,64 @@ if (!is.null(c7)) {
       Statistique = c(f3(c7$tab_spec$stat[1]), f3(ct1$statistic), f3(c7$tab_spec$stat[2]), f2(c7$tab_spec$stat[3])),
       p = c(fmtp(c7$tab_spec$p[1]), fmtp(ct1$p.value), fmtp(c7$tab_spec$p[2]), fmtp(c7$tab_spec$p[3])),
       stringsAsFactors = FALSE)
-    tex_tab(ts, names(ts), "lrr", "Tests de spécification", "tab:spectests",
-            note = "CT : pas de surdispersion (Poisson OK). Van den Broek : excès de zéros (hurdle justifié). Vuong : hurdle > Poisson.")
+    tex_tab(ts, c("Test", "Statistique", "p"), "lrr", "Tests de spécification", "tab:spectests",
+            note = "CT : test de $\\alpha=0$ (surdispersion, Var = mu + alpha*mu^2). Van den Broek : test d'excès de zéros. Vuong : comparaison non emboîtée Hurdle-Pois vs Poisson (statistique > 0 = Hurdle préféré).")
   })
   
   section("TABLEAU 12 - Bootstrap cluster de l'écart beta(M4)-beta(M3)", {
     tb <- c7$tab_boot
     tb2 <- data.frame(Estimateur = esc(tb$estimateur), diff = f4(tb$diff), SE = f4(tb$se),
-                      `IC95 bas` = f4(tb$ic_bas), `IC95 haut` = f4(tb$ic_haut), p = fmtp(tb$p),
+                      ic_bas = f4(tb$ic_bas), ic_haut = f4(tb$ic_haut), p = fmtp(tb$p),
                       stringsAsFactors = FALSE)
-    tex_tab(tb2, names(tb2), "lrrrrr", "Écart de coefficient z_expo entre M3 et M4 (delta method vs bootstrap)", "tab:boot",
-            note = "Bootstrap clusteré B = 500 (clusters = régions académiques). Écart non significatif : robuste aux FE.")
+    # PATCH v3 : en-têtes explicites
+    tex_tab(tb2, c("Estimateur", "$\\Delta\\beta$ (M4$-$M3)", "SE", "IC95 bas", "IC95 haut", "p"), "lrrrrr",
+            "Écart de coefficient z_expo entre M3 et M4 (delta method vs bootstrap)", "tab:boot",
+            note = "Bootstrap clusteré B = 500 (clusters = régions académiques).")
   })
   
-  section("TABLEAU 13 - Monte Carlo (M = 200, beta vrai = 0.035)", {
-    P <- c7$mc_raw$pois; N <- c7$mc_raw$nb
-    s_mean <- function(x) { x <- x[!is.na(x)]; if (length(x) == 0) NA_real_ else mean(x) }
-    s_sd   <- function(x) { x <- x[!is.na(x)]; if (length(x) < 2) NA_real_ else sd(x) }
-    s_cov  <- function(b, se) { ok <- !is.na(b) & !is.na(se)
-    if (!any(ok)) NA_real_ else mean(abs(b[ok] - 0.035) < 1.96*se[ok]) }
-    sfun <- function(M, dgp) data.frame(DGP = dgp, Estimateur = c("Poisson", "NB2"),
-                                        Biais = c(s_mean(M[1,]) - 0.035, s_mean(M[3,]) - 0.035),
-                                        SD_emp = c(s_sd(M[1,]), s_sd(M[3,])), SE_moy = c(s_mean(M[2,]), s_mean(M[4,])),
-                                        Couv95 = c(s_cov(M[1,], M[2,]), s_cov(M[3,], M[4,])), stringsAsFactors = FALSE)
-    tm <- rbind(sfun(P, "Poisson"), sfun(N, "NB2 (size = 1.5)"))
-    n_na <- sum(is.na(P[3,])) + sum(is.na(N[3,]))
-    tm2 <- data.frame(DGP = tm$DGP, Estimateur = tm$Estimateur, Biais = f4(tm$Biais),
-                      `SD emp.` = f4(tm$SD_emp), `SE moyen` = f4(tm$SE_moy), `Couv. 95\\%` = f3(tm$Couv95),
-                      stringsAsFactors = FALSE, check.names = FALSE)
-    tex_tab(tm2, names(tm2), "llrrrr", "Monte Carlo : biais, SD, SE moyen, couverture (M = 200)", "tab:mc",
-            note = paste0(n_na, " réplications NB2 non convergées (NA). Sous DGP Poisson : biais nul, couverture = 0.975."))
+  section(paste0("TABLEAU 13 - Monte Carlo (M = 200, paramètre suivi : ", c7$PARAM, ", beta* = ", c7$beta_star, ")"), {
+    tm  <- as.data.frame(c7$tab_mc)
+    tm2 <- data.frame(DGP = tm$dgp, Estimateur = tm$estimateur,
+                      Biais = f4(tm$biais), sd_emp = f4(tm$sd_emp),
+                      mean_se = f4(tm$mean_se), couv95 = f3(tm$couv95),
+                      stringsAsFactors = FALSE)
+    # PATCH v3 : en-têtes explicites (pas de names(tm2)[6] <- ...)
+    n_na <- if (!is.null(c7$mc_raw) && is.matrix(c7$mc_raw$pois))
+      sum(is.na(c7$mc_raw$pois[3, ])) + sum(is.na(c7$mc_raw$nb[3, ])) else NA
+    tex_tab(tm2, c("DGP", "Estimateur", "Biais", "SD emp.", "SE moyen", "Couv. 95\\%"), "llrrrr",
+            paste0("Monte Carlo : biais, SD, SE moyen, couverture (M = 200, beta* = ", c7$beta_star, " sur ", c7$PARAM, ")"),
+            "tab:mc",
+            note = paste0(if (!is.na(n_na)) paste0(n_na, " réplications NB2 non convergées (NA). ") else "",
+                          "DGP Poisson + estimateur Poisson : biais = ", f4(tm$biais[1]),
+                          ", couv. 95\\% = ", f3(tm$couv95[1]),
+                          ". Sous DGP NB2, le Poisson sous-estime ses SE (couv. < 95\\%) : d'où les SE clusterisées."))
   })
   
-  section("TABLEAU 14 - Spatial : Moran I + CV", {
+  section("TABLEAU 14 - Spatial : Moran I, SAR, CV", {
     mor <- data.frame(
       Indicateur = c("Moran I des résidus de M4 (8-NN, poids W)",
                      "MSE CV par blocs spatiaux (k-means, k = 10)",
                      "MSE CV aléatoire (10\\%, 20 répétitions)"),
       Valeur = c(f4(c7$moran$estimate[1]), f3(c7$tab_cv$mse[1]), f3(c7$tab_cv$mse[2])),
       p = c(fmtp(c7$moran$p.value), "--", "--"), stringsAsFactors = FALSE)
-    tex_tab(mor, names(mor), "lrr", "Autocorrélation spatiale des résidus et validation croisée", "tab:spatial",
-            note = paste0("Le CV aléatoire sous-estime l'erreur de ",
-                          f0(100*(c7$tab_cv$mse[1] - c7$tab_cv$mse[2])/c7$tab_cv$mse[1]),
-                          "\\% (fuite spatiale). SAR non estimé (spatialreg absent) : Moran I + CV spatial suffisent."))
+    rho_txt <- ""
+    if (!is.null(c7$m_sar) && "rho" %in% names(coef(c7$m_sar))) {
+      rho_v <- unname(coef(c7$m_sar)["rho"])
+      pv <- if (!is.null(c7$sar_rho)) fmtp(c7$sar_rho["p"]) else {
+        V <- tryCatch(vcov(c7$m_sar), error = function(e) NULL)
+        se <- if (!is.null(V) && "rho" %in% rownames(V)) sqrt(V["rho", "rho"]) else NA_real_
+        if (!is.na(se) && se > 0) fmtp(2 * pnorm(-abs(rho_v / se))) else "--" }
+      mor <- rbind(mor, data.frame(Indicateur = "$\\rho$ du modèle SAR (lagsarlm, 8-NN)",
+                                   Valeur = f4(rho_v), p = pv, stringsAsFactors = FALSE))
+      rho_txt <- paste0(" ; SAR rho = ", f4(rho_v))
+    }
+    # PATCH v3 : ratio neutre au lieu du pourcentage faux
+    ratio_cv <- c7$tab_cv$mse[2] / c7$tab_cv$mse[1]     # aléatoire / blocs spatiaux
+    note14 <- paste0("Moran I des résidus significatif", rho_txt, ". ",
+                     "MSE CV aléatoire / MSE CV par blocs spatiaux = ", f2(ratio_cv),
+                     " : la CV aléatoire est dominée par l'outlier Paris (y = 103) quand il tombe dans l'échantillon de test ; ",
+                     "la CV par blocs spatiaux (k-means, k = 10) reste la référence (pas de fuite spatiale).")
+    tex_tab(mor, c("Indicateur", "Valeur", "p"), "lrr",
+            "Autocorrélation spatiale des résidus et validation croisée", "tab:spatial", note = note14)
   })
-} else cat("\n!! code7.rds illisible : relance Code 7 pour les tableaux 11-14.\n")
-
-cat("\n\n>>> Copie chaque bloc entre '% ====' dans ton .tex, puis compile 2x (pdflatex) pour les \\ref / \\eqref.\n")
+} else cat("\n!! code7.rds illisible : relance le Code 7 v2 patché pour les tableaux 11-14.\n")

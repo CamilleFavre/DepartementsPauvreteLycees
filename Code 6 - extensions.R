@@ -11,6 +11,7 @@
 #   cp <- readRDS(file.path(DOSSIER_OUT, "code7_2_boot.rds"))
 # =====================================================================
 library(arrow); library(dplyr); library(sandwich); library(lmtest)
+
 library(pscl); library(AER); library(MASS); library(sf); library(ggplot2)
 library(spdep); library(parallel)
 if (requireNamespace("spatialreg", quietly = TRUE)) library(spatialreg)
@@ -79,7 +80,7 @@ if (!is.null(m_hp)) {
   mu_i <- predict(m_hp, type = "count")
   # log-vraisemblance hurdle-Poisson : y=0 -> log(pi) ; y>0 -> log(1-pi) + log f(y) - log(1 - f(0))
   ll_h <- ifelse(d_mod$y == 0, log(pi_i),
-                 log(1 - pi_i) + dpois(d_mod$y, mu_i, log = TRUE) - dpois(0, mu_i, log = TRUE))
+                 log(1 - pi_i) + dpois(d_mod$y, mu_i, log = TRUE) - log(1 - dpois(0, mu_i)))
   m_i  <- ll_h - ll_pois
   vuong_stat <- sum(m_i) / (sqrt(length(m_i)) * sd(m_i))
   p_vuong <- 2 * pnorm(-abs(vuong_stat))
@@ -235,10 +236,14 @@ m_sar <- tryCatch(
     spatialreg::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE)
   else spdep::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE),
   error = function(e) { message("SAR non estimé : ", e$message); NULL })
-if (!is.null(m_sar)) {
-  sm <- summary(m_sar)$Coef
-  cat(sprintf("SAR rho = %.4f | SE = %.4f | p = %.4g\n",
-              unname(coef(m_sar)["rho"]), sm["rho", "Std. Error"], sm["rho", "Pr(>|z|)"]))
+sar_rho <- NULL
+if (!is.null(m_sar) && "rho" %in% names(coef(m_sar))) {
+  rho_v  <- unname(coef(m_sar)["rho"])
+  V_sar  <- tryCatch(vcov(m_sar), error = function(e) NULL)
+  se_rho <- if (!is.null(V_sar) && "rho" %in% rownames(V_sar)) sqrt(V_sar["rho", "rho"]) else NA_real_
+  p_rho  <- if (!is.na(se_rho) && se_rho > 0) 2 * pnorm(-abs(rho_v / se_rho)) else NA_real_
+  sar_rho <- c(rho = rho_v, se = se_rho, p = p_rho)
+  cat(sprintf("SAR rho = %.4f | SE = %.4f | p = %.4g\n", rho_v, se_rho, p_rho))
 }
 
 f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")  # inclut z_moran
@@ -271,8 +276,9 @@ cat("Checkpoint 4 OK\n")
 # 5. SAUVEGARDE FINALE
 # ---------------------------------------------------------------------
 saveRDS(list(tab_spec = tab_spec, tab_boot = tab_boot, tab_mc = tab_mc, tab_cv = tab_cv,
-             moran = mt, m_sar = m_sar, boot_diff = boot_diff, boot_moran = boot_moran,
+             moran = mt, m_sar = m_sar, sar_rho = sar_rho, boot_diff = boot_diff, boot_moran = boot_moran,
              mc_raw = list(pois = mc_pois_dgp, nb = mc_nb_dgp),
              PARAM = PARAM, beta_star = beta_star),
         file.path(DOSSIER_OUT, "code7.rds"))
 cat("Code 7 v2 terminé : code7.rds + tab_spec/tab_boot/tab_mc/tab_cv.csv + 3 figs + checkpoints\n")
+

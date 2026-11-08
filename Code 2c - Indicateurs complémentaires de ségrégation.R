@@ -1,8 +1,8 @@
 # =====================================================================
-# CODE 2c - INDICATEURS COMPLÉMENTAIRES DE SÉGRÉGATION (VERSION CORRIGÉE)
+# CODE 2c - INDICATEURS COMPLÉMENTAIRES DE SÉGRÉGATION (VERSION REGROUPÉE PLM)
 #
 # Entrée  : fichiers eco_dept_*.parquet (carreaux Filosofi 200m)
-# Sortie  : df_segregation_complementaire.parquet (une ligne par commune)
+# Sortie  : df_segregation_complementaire.parquet (UNE LIGNE PAR VILLE)
 #
 # Indicateurs calculés :
 #   - Exposition spatiale aux riches (Pxx) - version Massey & Denton
@@ -14,15 +14,23 @@
 #   - Getis-Ord Gi* (concentration spatiale de la richesse)
 #   - Indice de ségrégation multidimensionnel (revenu + pauvreté)
 #
-# À placer : APRÈS le Code 2, AVANT le Code 3b
+# REGROUPEMENT PLM : AGREGER_PLM = TRUE -> les arrondissements de Paris
+#   (751xx), Lyon (6938x) et Marseille (132xx) sont fusionnés en UNE ville
+#   (75056 / 69123 / 13055) AVANT tout calcul : les indicateurs spatiaux
+#   (exposition Pxx, Getis-Ord) traversent alors les frontières
+#   d'arrondissement, et SEUIL_POP_SPATIAL s'applique à la VILLE entière.
+#   Même niveau que Code 2 v2 et Code 3b (AGREGER_PLM = TRUE des deux côtés).
+#
+# À placer : APRÈS le Code 2 v2, AVANT le Code 3b
 # =====================================================================
 
 library(arrow)
 library(dplyr)
 library(spdep)
 
+rm(list = ls())
 # ---------------------------------------------------------------------
-# 0. PARAMÈTRES (identiques au Code 2)
+# 0. PARAMÈTRES (identiques au Code 2 v2)
 # ---------------------------------------------------------------------
 os_name <- Sys.info()[["sysname"]]
 
@@ -36,15 +44,27 @@ if (os_name == "Windows") {
   stop("Système d'exploitation non pris en charge.")
 }
 
-SEUIL_POP_SPATIAL <- 10000   # communes avec assez de carreaux
+SEUIL_POP_SPATIAL <- 10000   # villes avec assez de carreaux
 DIST_VOISIN       <- 285     # m : 8 voisins d'un carreau 200m
 MIN_CARREAUX      <- 30      # minimum de carreaux pour les indicateurs spatiaux
+AGREGER_PLM       <- TRUE    # TRUE = Paris/Lyon/Marseille en 1 ville (75056/69123/13055)
 
 set.seed(2025)
 
 # ---------------------------------------------------------------------
 # 1. FONCTIONS AUXILIAIRES
 # ---------------------------------------------------------------------
+
+# Fusion des arrondissements PLM en une commune (copie conforme de map_plm()
+# du Code 2 v2 / Code 3b)
+map_plm <- function(code) {
+  dplyr::case_when(
+    grepl("^751(0[1-9]|1[0-9]|20)$", code) ~ "75056",
+    grepl("^6938[1-9]$", code)             ~ "69123",
+    grepl("^132(0[1-9]|1[0-6])$", code)    ~ "13055",
+    TRUE ~ code
+  )
+}
 
 # Médiane pondérée (fonction autonome)
 weighted_median <- function(x, w) {
@@ -250,12 +270,12 @@ segregation_multidim <- function(revenu, ind, men_pauv, men) {
 }
 
 # ---------------------------------------------------------------------
-# 3. FONCTION PRINCIPALE PAR COMMUNE
+# 3. FONCTION PRINCIPALE PAR VILLE
 # ---------------------------------------------------------------------
 calculer_indicateurs_commune <- function(d) {
   
-  # d = data.frame d'une commune avec colonnes :
-  # lcog_geo, x_l93, y_l93, ind, men, men_pauv, revenu_moyen
+  # d = data.frame d'une VILLE (arrondissements PLM déjà fusionnés en amont)
+  # colonnes : lcog_geo, x_l93, y_l93, ind, men, men_pauv, revenu_moyen
   
   # Filtrer carreaux valides
   d <- d %>%
@@ -328,8 +348,9 @@ calculer_indicateurs_commune <- function(d) {
 files <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$", full.names = TRUE)
 n_files <- length(files)
 results_list <- vector("list", n_files)
+start_total <- Sys.time()
 
-cat("Calcul des indicateurs complémentaires de ségrégation...\n")
+cat("Calcul des indicateurs complémentaires de ségrégation (niveau VILLE, PLM regroupées)...\n")
 
 for (i in seq_along(files)) {
   t0 <- Sys.time()
@@ -337,18 +358,21 @@ for (i in seq_along(files)) {
   df <- read_parquet(files[i])
   
   # Préparer les données
+  # >>> REGROUPEMENT PLM : code_insee au niveau VILLE (75056/69123/13055) <<<
   df <- df %>%
     mutate(
-      code_insee = substr(as.character(lcog_geo), 1, 5),
+      code_brut     = substr(as.character(lcog_geo), 1, 5),
+      code_insee    = if (AGREGER_PLM) map_plm(code_brut) else code_brut,
       taux_pauvrete = ifelse(!is.na(men) & men > 0, men_pauv / men * 100, NA_real_)
     )
+  # pop_com, communes_cibles, df_cible et split() héritent tous du code_insee mappé
   
-  # Agréger par commune pour avoir la population totale
+  # Agréger par VILLE pour avoir la population totale
   pop_com <- df %>%
     group_by(code_insee) %>%
     summarise(pop_totale = sum(ind, na.rm = TRUE), .groups = "drop")
   
-  # Filtrer les communes assez peuplées
+  # Filtrer les villes assez peuplées (seuil appliqué à la population de la VILLE)
   communes_cibles <- pop_com %>%
     filter(pop_totale >= SEUIL_POP_SPATIAL) %>%
     pull(code_insee)
@@ -356,7 +380,7 @@ for (i in seq_along(files)) {
   df_cible <- df %>% filter(code_insee %in% communes_cibles)
   
   if (nrow(df_cible) > 0) {
-    # Calculer les indicateurs par commune
+    # Calculer les indicateurs par ville
     liste_com <- split(df_cible, df_cible$code_insee)
     
     res_com <- bind_rows(lapply(liste_com, calculer_indicateurs_commune),
@@ -367,11 +391,11 @@ for (i in seq_along(files)) {
     results_list[[i]] <- tibble(code_insee = character())
   }
   
-  el <- as.numeric(Sys.time() - t0, units = "secs")
+  el <- as.numeric(Sys.time() - start_total, units = "secs")
   if (i %% 10 == 0 || i == n_files) {
-    cat(sprintf("[%02d/%02d] %s | %d communes | %.1fs | reste ~%.0fs\n",
+    cat(sprintf("[%02d/%02d] %s | %d villes | %.1fs écoulées | reste ~%.0fs\n",
                 i, n_files, basename(files[i]), length(communes_cibles),
-                el, (n_files - i) * el / max(i, 1) * 10))
+                el, (n_files - i) * el / i))
   }
 }
 
@@ -390,7 +414,7 @@ indicateurs_num <- c("exposition_riches", "entropie_diversite", "diversite_binai
 # Standardiser (z-scores) pour comparabilité dans les régressions
 df_segregation <- df_segregation %>%
   mutate(across(all_of(indicateurs_num),
-                ~ as.numeric(scale(.)),  # z-score
+                ~ as.numeric(scale(.)),
                 .names = "z_{.col}"))
 
 # Sauvegarder
@@ -400,9 +424,19 @@ write_parquet(df_segregation, file.path(DOSSIER_OUT, "df_segregation_complementa
 # 6. CONTRÔLES
 # ---------------------------------------------------------------------
 cat("\n=== CONTRÔLES ===\n")
-cat("Communes traitées :", nrow(df_segregation), "\n\n")
+cat("Villes traitées :", nrow(df_segregation), "\n\n")
 
-cat("Résumé des indicateurs (valeurs brutes) :\n")
+# >>> VÉRIFICATION REGROUPEMENT PLM <<<
+cat("Codes PLM présents (doit contenir 75056, 69123, 13055) :\n")
+print(sort(unique(df_segregation$code_insee[grepl("^75|^69|^13", df_segregation$code_insee) &
+                                              df_segregation$code_insee %in% c("75056","69123","13055")])))
+arr_resid <- df_segregation$code_insee[
+  grepl("^751(0[1-9]|1[0-9]|20)$|^6938[1-9]$|^132(0[1-9]|1[0-6])$", df_segregation$code_insee)]
+cat("Arrondissements PLM résiduels (doit être 0) :", length(arr_resid), "\n")
+stopifnot(length(arr_resid) == 0)
+stopifnot(all(c("75056", "69123", "13055") %in% df_segregation$code_insee))
+
+cat("\nRésumé des indicateurs (valeurs brutes) :\n")
 print(summary(df_segregation[, indicateurs_num]))
 
 cat("\nCorrélations entre indicateurs (valeurs brutes) :\n")

@@ -1,3 +1,3 @@
 "methode","mse"
-"CV blocs spatiaux (k-means k=10)",1.93678321862437
-"CV aléatoire (10%, 20 rép.)",1.52641452738762
+"CV blocs spatiaux (k-means k=10)",1.81444388141118
+"CV aléatoire (10%, 20 rép.)",9.53599349683609

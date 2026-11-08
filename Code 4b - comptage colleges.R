@@ -10,6 +10,10 @@
 library(arrow); library(dplyr); library(sandwich); library(lmtest)
 library(pscl); library(AER); library(sf); library(stringi); library(stringr)
 
+rm(list=ls())
+
+select <- dplyr::select
+
 os_name <- Sys.info()[["sysname"]]
 if (os_name == "Windows") {
   DOSSIER     <- "G:/Mon Drive/Education/Master APE 25-27/Mémoire/Données MicroMetrics"
@@ -39,7 +43,9 @@ map_plm <- function(code) {
 # 1. LECTURE + JOINTURE INDICATEURS SÉGRÉGATION (Code 2c) — VERSION BLINDÉE
 # ---------------------------------------------------------------------
 d <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
+colnames(d)
 df_segreg <- read_parquet(file.path(DOSSIER_OUT, "df_segregation_complementaire.parquet"))
+colnames(df_segreg)
 
 cat("N analyse_colleges =", nrow(d), "| N seg =", nrow(df_segreg), "\n")
 plm_d <- sort(unique(d$code_insee[grepl("^751|^6938|^132", d$code_insee)]))
@@ -169,6 +175,15 @@ vars_utiles <- intersect(vars_utiles, names(d))
 d_mod <- d[complete.cases(d[, vars_utiles]), ]
 cat(sprintf("N = %d (%d perdus) | régions académiques : %d\n",
             nrow(d_mod), nrow(d) - nrow(d_mod), nlevels(droplevels(d_mod$region_acad))))
+
+# --- quelles villes sont écartées par complete.cases ? ---
+perdues <- d[!complete.cases(d[, vars_utiles]), ]
+if (nrow(perdues) > 0) {
+  na_cols  <- vars_utiles[apply(is.na(perdues[, vars_utiles, drop = FALSE]), 2, any)]
+  cols_out <- intersect(c("code_insee", "nom_commune", "pop_totale", na_cols), names(perdues))
+  cat("\nVilles écartées par complete.cases :", nrow(perdues), "\n")
+  print(as.data.frame(perdues)[, cols_out], row.names = FALSE)
+} else cat("\nAucune ville écartée.\n")
 
 cat("\n--- Distribution de", VAR_Y, "---\n")
 print(table(d_mod$y))
@@ -301,3 +316,4 @@ saveRDS(list(
   vars_stab = vars_stab, X_SEG = X_SEG, X_CTRL = X_CTRL
 ), file.path(DOSSIER_OUT, "modeles_comptage.rds"))
 cat("modeles_comptage.rds écrit.\n")
+

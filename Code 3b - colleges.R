@@ -12,6 +12,8 @@
 # =====================================================================
 
 library(dplyr); library(stringr); library(arrow); library(sf)
+rm(list = ls())
+select <- dplyr::select
 
 # Détection automatique du système d'exploitation
 os_name <- Sys.info()[["sysname"]]
