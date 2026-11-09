@@ -95,6 +95,56 @@ write.csv(tab_spec, file.path(DOSSIER_OUT, "tab_spec.csv"), row.names = FALSE)
 CK("1_spec", tab_spec)
 cat("Checkpoint 1 OK\n")
 
+# ============ Van den Broek : versions cluster-robustes (spatial) ============
+# (m_p = Poisson M4 ; adapte le nom si ton Code 7 l'appelle autrement)
+m_p <- modeles$Poisson                              # M4 avec FE (cohérent avec les tests CT)
+p0  <- dpois(0, fitted(m_p))
+n0  <- sum(d_mod$y == 0)
+z_vdb_iid <- (n0 - sum(p0)) / sqrt(sum(p0 * (1 - p0)))
+
+u_score <- ifelse(d_mod$y == 0, 1/p0 - 1, -1)
+vdB_z <- function(cl, n = length(u_score)) {
+  if (is.null(cl)) return(list(z = NA_real_, p = NA_real_, G = 0))
+  if (inherits(cl, "kmeans")) cl <- cl$cluster
+  cl <- as.character(cl)
+  if (length(cl) != n) return(list(z = NA_real_, p = NA_real_, G = length(cl)))
+  Ug <- tapply(u_score, cl, sum); G <- length(Ug)
+  if (G < 3) return(list(z = NA_real_, p = NA_real_, G = G))
+  z <- sum(u_score) / sqrt(G/(G-1) * sum(Ug^2))
+  list(z = z, p = 2 * pnorm(-abs(z)), G = G)
+}
+
+cl_acad  <- as.character(d_mod$region_acad)
+cl_dept  <- as.character(d_mod$dept)
+cl_block <- as.character(bloc)                      # ← le bon vecteur (length 925)
+
+vdB_rob <- list(
+  iid   = list(z = z_vdb_iid, p = 2*pnorm(-abs(z_vdb_iid)), G = nrow(d_mod)),
+  acad  = vdB_z(cl_acad),
+  dept  = vdB_z(cl_dept),
+  block = vdB_z(cl_block)
+)
+
+# wild cluster bootstrap (Rademacher) sur les 3 partitions
+wild_boot <- function(cl, B = 2000) {
+  Ug <- as.numeric(tapply(d_mod$y == 0, cl, sum) - tapply(p0, cl, sum))
+  G <- length(Ug); T_obs <- sum(Ug); V_cl <- G/(G-1) * sum(Ug^2)
+  set.seed(2026)
+  W  <- matrix(sample(c(-1, 1), G * B, replace = TRUE), nrow = G)
+  Tb <- as.numeric(t(W) %*% Ug)
+  list(z = T_obs/sqrt(V_cl), p_normal = 2*pnorm(-abs(T_obs/sqrt(V_cl))),
+       p_wild = mean(abs(Tb/sqrt(V_cl)) >= abs(T_obs/sqrt(V_cl))), B = B, G = G)   # ← list(), pas c()
+}
+
+vdB_rob$wild_acad  <- wild_boot(cl_acad)
+vdB_rob$wild_dept  <- wild_boot(cl_dept)
+vdB_rob$wild_block <- wild_boot(cl_block)
+
+print(vdB_rob)
+sapply(vdB_rob[c("iid","acad","dept","block")], function(x) round(c(x$z, x$p, x$G), 4))
+# >>> saveRDS(code7.rds) en ajoutant vdB_rob = vdB_rob
+# >>> AJOUTER dans le saveRDS de code7.rds :  vdB_rob = vdB_rob
+
 # ---------------------------------------------------------------------
 # 2. ÉCART beta(M4)-beta(M3) : delta method + bootstrap clusteré B=500
 #    (sur z_exposition_riches pour tab_boot ; z_moran aussi sauvegardé)
@@ -276,7 +326,7 @@ cat("Checkpoint 4 OK\n")
 # 5. SAUVEGARDE FINALE
 # ---------------------------------------------------------------------
 saveRDS(list(tab_spec = tab_spec, tab_boot = tab_boot, tab_mc = tab_mc, tab_cv = tab_cv,
-             moran = mt, m_sar = m_sar, sar_rho = sar_rho, boot_diff = boot_diff, boot_moran = boot_moran,
+             moran = mt, m_sar = m_sar, sar_rho = sar_rho, boot_diff = boot_diff, boot_moran = boot_moran, vdB_rob = vdB_rob,
              mc_raw = list(pois = mc_pois_dgp, nb = mc_nb_dgp),
              PARAM = PARAM, beta_star = beta_star),
         file.path(DOSSIER_OUT, "code7.rds"))
