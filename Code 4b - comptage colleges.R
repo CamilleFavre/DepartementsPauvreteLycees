@@ -173,6 +173,15 @@ vars_utiles <- unique(c("y", "dept", "academie", "region_acad",
                         unlist(lapply(formules, all.vars))))
 vars_utiles <- intersect(vars_utiles, names(d))
 d_mod <- d[complete.cases(d[, vars_utiles]), ]
+
+# >>> PATCH : standardisation des 4 indices SUR l'échantillon d'estimation <<<
+# (les z_ venus de df_segreg / du §3 étaient calculés sur les 930 villes ;
+#  on les recalcule ici sur d_mod, N final, pour que scale(brut) == z exactement)
+map_z <- c(z_theil = "theil_revenu", z_moran = "moran_I_rev",
+           z_exposition_riches = "exposition_riches", z_polarisation = "polarisation")
+stopifnot(all(unname(map_z) %in% names(d_mod)))
+for (zn in names(map_z)) d_mod[[zn]] <- as.numeric(scale(d_mod[[map_z[zn]]]))
+cat("z_* recalculés sur N =", nrow(d_mod), "\n")
 cat(sprintf("N = %d (%d perdus) | régions académiques : %d\n",
             nrow(d_mod), nrow(d) - nrow(d_mod), nlevels(droplevels(d_mod$region_acad))))
 

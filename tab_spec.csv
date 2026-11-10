@@ -1,4 +1,4 @@
 "test","stat","p"
-"Cameron-Trivedi alpha (trafo=2)",-0.0076784599535741,0.753537713646497
-"Van den Broek (excès de zéros)",-2.94473983279054,0.00323226329036413
-"Vuong Hurdle-Pois vs Poisson",-31.8635258449402,8.55144480779492e-223
+"Cameron-Trivedi alpha (trafo=2)",-0.00767845995358547,0.753537713646789
+"Van den Broek (excès de zéros)",-2.94473983279094,0.00323226329035993
+"Vuong Hurdle-Pois vs Poisson",-31.8635264057774,8.55129184248555e-223

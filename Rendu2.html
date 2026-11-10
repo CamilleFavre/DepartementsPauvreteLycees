@@ -2543,20 +2543,38 @@ Figure 3: Number of public collèges per commune
 <div class="cell">
 <details class="code-fold">
 <summary>Show code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>vars_m4 <span class="ot">&lt;-</span> <span class="fu">setdiff</span>(<span class="fu">all.vars</span>(formules<span class="sc">$</span>M4), <span class="fu">c</span>(<span class="st">&quot;y&quot;</span>, <span class="st">&quot;region_acad&quot;</span>))</span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>desc <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">Variable =</span> <span class="fu">vlab</span>(vars_m4),</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">Mean    =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_m4], mean, <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">SD      =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_m4], sd, <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">Min     =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_m4], min, <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">Median  =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_m4], median, <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">Max     =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_m4], max, <span class="at">na.rm =</span> <span class="cn">TRUE</span>)))</span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(desc, <span class="at">caption =</span> <span class="fu">paste0</span>(<span class="st">&quot;Descriptive statistics of the M4 variables (N = &quot;</span>, N, <span class="st">&quot; cities; Paris, Lyon and Marseille merged into single cities).&quot;</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># mapping z -&gt; colonne brute (noms relevés via names(d_mod))</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>raw_map <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="at">z_theil =</span> <span class="st">&quot;theil_revenu&quot;</span>, <span class="at">z_moran =</span> <span class="st">&quot;moran_I_rev&quot;</span>,</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>             <span class="at">z_exposition_riches =</span> <span class="st">&quot;exposition_riches&quot;</span>, <span class="at">z_polarisation =</span> <span class="st">&quot;polarisation&quot;</span>)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>raw_lab <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="at">z_theil =</span> <span class="st">&quot;Theil $T_c$&quot;</span>, <span class="at">z_moran =</span> <span class="st">&quot;Moran $I_c$&quot;</span>,</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>             <span class="at">z_exposition_riches =</span> <span class="st">&quot;Exposure $P_{xx,c}$&quot;</span>, <span class="at">z_polarisation =</span> <span class="st">&quot;Wolfson $W_c$&quot;</span>)</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="co"># vérif : chaque z_* doit être le scale() de sa colonne brute</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="co"># (vrai depuis que Code 4b standardise sur d_mod, N = 925 ; sinon simple warning)</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>chk <span class="ot">&lt;-</span> <span class="fu">sapply</span>(<span class="fu">names</span>(raw_map), <span class="cf">function</span>(z)</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">isTRUE</span>(<span class="fu">all.equal</span>(<span class="fu">as.numeric</span>(<span class="fu">scale</span>(d_mod[[raw_map[[z]]]])), d_mod[[z]], <span class="at">tolerance =</span> <span class="fl">1e-6</span>)))</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (<span class="sc">!</span><span class="fu">all</span>(chk))</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">warning</span>(<span class="st">&quot;z != scale(brut) pour : &quot;</span>, <span class="fu">paste</span>(<span class="fu">names</span>(chk)[<span class="sc">!</span>chk], <span class="at">collapse =</span> <span class="st">&quot;, &quot;</span>),</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>          <span class="st">&quot; (z standardisé hors échantillon ?)&quot;</span>)</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>vars_m4  <span class="ot">&lt;-</span> <span class="fu">setdiff</span>(<span class="fu">all.vars</span>(formules<span class="sc">$</span>M4), <span class="fu">c</span>(<span class="st">&quot;y&quot;</span>, <span class="st">&quot;region_acad&quot;</span>))</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>vars_use <span class="ot">&lt;-</span> <span class="fu">unname</span>(<span class="fu">ifelse</span>(vars_m4 <span class="sc">%in%</span> <span class="fu">names</span>(raw_map), raw_map[vars_m4], vars_m4))</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>lab      <span class="ot">&lt;-</span> <span class="fu">unname</span>(<span class="fu">ifelse</span>(vars_m4 <span class="sc">%in%</span> <span class="fu">names</span>(raw_lab), raw_lab[vars_m4], <span class="fu">vlab</span>(vars_m4)))</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>desc <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>  <span class="at">Variable =</span> lab,</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>  <span class="at">Mean     =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_use], mean,   <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>  <span class="at">SD       =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_use], sd,     <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>  <span class="at">Min      =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_use], min,    <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">Median   =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_use], median, <span class="at">na.rm =</span> <span class="cn">TRUE</span>)),</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">Max      =</span> <span class="fu">sprintf</span>(<span class="st">&quot;%.2f&quot;</span>, <span class="fu">sapply</span>(d_mod[, vars_use], max,    <span class="at">na.rm =</span> <span class="cn">TRUE</span>)))</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(desc, <span class="at">caption =</span> <span class="fu">paste0</span>(<span class="st">&quot;Descriptive statistics of the M4 variables (N = &quot;</span>, N,</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot; cities; Paris, Lyon and Marseille merged into single cities). The four segregation indices are shown in raw units (Theil &gt;= 0, Moran in [-1,1], Pxx in [0.25,1], Wolfson &gt;= 0); in models M0--M4 they enter as z-scores, so coefficients and AMEs are per +1 SD.&quot;</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div id="tbl-desc" class="cell quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-tbl figure">
 <figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-desc-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table 1: Descriptive statistics of the M4 variables (N = 925 cities; Paris, Lyon and Marseille merged into single cities).
+Table 1: Descriptive statistics of the M4 variables (N = 925 cities; Paris, Lyon and Marseille merged into single cities). The four segregation indices are shown in raw units (Theil &gt;= 0, Moran in [-1,1], Pxx in [0.25,1], Wolfson &gt;= 0); in models M0–M4 they enter as z-scores, so coefficients and AMEs are per +1 SD.
 </figcaption>
 <div aria-describedby="tbl-desc-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output-display">
@@ -2581,36 +2599,36 @@ Table 1: Descriptive statistics of the M4 variables (N = 925 cities; Paris, Lyo
 </thead>
 <tbody>
 <tr class="odd">
-<td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
+<td style="text-align: left;">Theil <span class="math inline">\(T_c\)</span></td>
+<td style="text-align: left;">0.02</td>
 <td style="text-align: left;">0.01</td>
-<td style="text-align: left;">1.00</td>
-<td style="text-align: left;">-1.93</td>
-<td style="text-align: left;">-0.11</td>
-<td style="text-align: left;">5.11</td>
+<td style="text-align: left;">0.00</td>
+<td style="text-align: left;">0.02</td>
+<td style="text-align: left;">0.05</td>
 </tr>
 <tr class="even">
-<td style="text-align: left;">Moran <span class="math inline">\(I\)</span> (z)</td>
-<td style="text-align: left;">-0.00</td>
-<td style="text-align: left;">1.00</td>
-<td style="text-align: left;">-3.63</td>
-<td style="text-align: left;">0.04</td>
-<td style="text-align: left;">2.51</td>
+<td style="text-align: left;">Moran <span class="math inline">\(I_c\)</span></td>
+<td style="text-align: left;">0.43</td>
+<td style="text-align: left;">0.15</td>
+<td style="text-align: left;">-0.10</td>
+<td style="text-align: left;">0.44</td>
+<td style="text-align: left;">0.80</td>
 </tr>
 <tr class="odd">
-<td style="text-align: left;">Exposure <span class="math inline">\(P_{xx}\)</span> (z)</td>
-<td style="text-align: left;">0.00</td>
-<td style="text-align: left;">1.00</td>
-<td style="text-align: left;">-2.71</td>
-<td style="text-align: left;">-0.07</td>
-<td style="text-align: left;">3.91</td>
+<td style="text-align: left;">Exposure <span class="math inline">\(P_{xx,c}\)</span></td>
+<td style="text-align: left;">0.45</td>
+<td style="text-align: left;">0.10</td>
+<td style="text-align: left;">0.17</td>
+<td style="text-align: left;">0.44</td>
+<td style="text-align: left;">0.85</td>
 </tr>
 <tr class="even">
-<td style="text-align: left;">Polarization <span class="math inline">\(W\)</span> (z)</td>
-<td style="text-align: left;">-0.00</td>
-<td style="text-align: left;">1.00</td>
-<td style="text-align: left;">-1.24</td>
-<td style="text-align: left;">-0.23</td>
-<td style="text-align: left;">4.04</td>
+<td style="text-align: left;">Wolfson <span class="math inline">\(W_c\)</span></td>
+<td style="text-align: left;">0.11</td>
+<td style="text-align: left;">0.09</td>
+<td style="text-align: left;">0.00</td>
+<td style="text-align: left;">0.09</td>
+<td style="text-align: left;">0.45</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">log population</td>
@@ -3220,8 +3238,8 @@ Table 4: Poisson M4, coefficients (cluster-robust SE by region-academy, HC1; N 
 <tbody>
 <tr class="odd">
 <td style="text-align: left;">Intercept</td>
-<td style="text-align: left;">-39.0880</td>
-<td style="text-align: left;">8.5737</td>
+<td style="text-align: left;">-39.0883</td>
+<td style="text-align: left;">8.5738</td>
 <td style="text-align: left;">-4.56</td>
 <td style="text-align: left;">&lt;0.001</td>
 <td style="text-align: left;">0.000</td>
@@ -3229,7 +3247,7 @@ Table 4: Poisson M4, coefficients (cluster-robust SE by region-academy, HC1; N 
 </tr>
 <tr class="even">
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: left;">-0.0442</td>
+<td style="text-align: left;">-0.0441</td>
 <td style="text-align: left;">0.0462</td>
 <td style="text-align: left;">-0.96</td>
 <td style="text-align: left;">0.340</td>
@@ -3521,12 +3539,12 @@ Table 6: Segregation coefficients across specifications (*** p&lt;0.001, ** p&l
 <tbody>
 <tr class="odd">
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: center;">0.5317***</td>
+<td style="text-align: center;">0.5310***</td>
 <td style="text-align: center;">0.0399</td>
-<td style="text-align: center;">-0.0642</td>
-<td style="text-align: center;">-0.0603</td>
+<td style="text-align: center;">-0.0641</td>
+<td style="text-align: center;">-0.0602</td>
 <td style="text-align: center;">–</td>
-<td style="text-align: center;">-0.0442</td>
+<td style="text-align: center;">-0.0441</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Moran <span class="math inline">\(I\)</span> (z)</td>
@@ -3599,9 +3617,9 @@ Table 7: Information criteria. NB2 is degenerate (θ → ∞: coefficients coll
 </tr>
 <tr class="even">
 <td style="text-align: left;">NB2</td>
-<td style="text-align: left;">10288.0</td>
-<td style="text-align: left;">10403.9</td>
-<td style="text-align: left;">-5120.0</td>
+<td style="text-align: left;">-336.0</td>
+<td style="text-align: left;">-220.1</td>
+<td style="text-align: left;">192.0</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Hurdle_NB</td>
@@ -3611,9 +3629,9 @@ Table 7: Information criteria. NB2 is degenerate (θ → ∞: coefficients coll
 </tr>
 <tr class="even">
 <td style="text-align: left;">ZINB</td>
-<td style="text-align: left;">2188.1</td>
-<td style="text-align: left;">2415.1</td>
-<td style="text-align: left;">-1047.1</td>
+<td style="text-align: left;">2188.6</td>
+<td style="text-align: left;">2415.6</td>
+<td style="text-align: left;">-1047.3</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Hurdle_Pois</td>
@@ -3671,7 +3689,7 @@ Table 8: Observed vs predicted frequencies (y = 0 to 8+). Zeros: 362 observed; 
 <td style="text-align: left;">270.6</td>
 <td style="text-align: left;">270.6</td>
 <td style="text-align: left;">332.1</td>
-<td style="text-align: left;">258.9</td>
+<td style="text-align: left;">258.8</td>
 <td style="text-align: left;">332.1</td>
 </tr>
 <tr class="odd">
@@ -3774,7 +3792,7 @@ Table 9: Average marginal effects, M4 (finite difference h = 0.01): change in t
 <tbody>
 <tr class="odd">
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: left;">-0.0641</td>
+<td style="text-align: left;">-0.0640</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Moran <span class="math inline">\(I\)</span> (z)</td>
@@ -3804,12 +3822,17 @@ Table 9: Average marginal effects, M4 (finite difference h = 0.01): change in t
 <div class="cell">
 <div id="tbl-spectests" class="cell quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-tbl figure">
-<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl quarto-uncaptioned" id="tbl-spectests-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table 10
+<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-spectests-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Table 10: Specification tests on the Poisson M4 (N = 925). CT: overdispersion; Van den Broek: zero probability (cluster-robust versions from code7.rds); Vuong: Hurdle vs Poisson (V &gt; 0 = Hurdle closer).
 </figcaption>
 <div aria-describedby="tbl-spectests-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output-display">
-<table class="caption-top table table-sm table-striped small">
+<table class="cell caption-top table table-sm table-striped small">
+<colgroup>
+<col style="width: 71%">
+<col style="width: 17%">
+<col style="width: 11%">
+</colgroup>
 <thead>
 <tr class="header">
 <th style="text-align: left;">Test</th>
@@ -3864,9 +3887,39 @@ Table 10
 <td style="text-align: right;">0.021</td>
 </tr>
 <tr class="even">
-<td style="text-align: left;">Vuong Hurdle-Pois vs Poisson</td>
-<td style="text-align: right;">31.864</td>
+<td style="text-align: left;">Vuong Hurdle vs Poisson (iid)</td>
+<td style="text-align: right;">-31.86</td>
 <td style="text-align: right;">&lt; 0.001</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Vuong cluster académie (G = 13)</td>
+<td style="text-align: right;">-2.88</td>
+<td style="text-align: right;">0.004</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Vuong cluster département (G = 96)</td>
+<td style="text-align: right;">-6.88</td>
+<td style="text-align: right;">&lt; 0.001</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Vuong blocs spatiaux k-means, k = 10</td>
+<td style="text-align: right;">-2.52</td>
+<td style="text-align: right;">0.012</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Vuong wild cluster bootstrap B = 2000 (académies)</td>
+<td style="text-align: right;">–</td>
+<td style="text-align: right;">0.001</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Vuong wild bootstrap (départements)</td>
+<td style="text-align: right;">–</td>
+<td style="text-align: right;">&lt; 0.001</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Vuong wild bootstrap (blocs spatiaux)</td>
+<td style="text-align: right;">–</td>
+<td style="text-align: right;">0.002</td>
 </tr>
 </tbody>
 </table>
@@ -3875,7 +3928,7 @@ Table 10
 </figure>
 </div>
 </div>
-<p>The raw Var/Mean ratio is 12.70, but it is driven by the zero mass and by between-city heterogeneity in <span class="math inline">\(\mu\)</span> (the Paris outlier): the Cameron–Trivedi test on the fitted M4 does <strong>not</strong> reject equidispersion (<span class="math inline">\(z = -0.686\)</span>, <span class="math inline">\(p = 0.754\)</span>; <span class="math inline">\(\hat\alpha \approx -0.008\)</span>), which is why NB2 degenerates (<span class="math inline">\(\theta \to \infty\)</span>, an AIC artifact). The real problem is the <strong>zero probability</strong>: the Van den Broek test rejects <span class="math inline">\(H_0\)</span> (<span class="math inline">\(z = -3.269\)</span>, <span class="math inline">\(p = 0.001\)</span> in the iid version; the cluster-robust versions — académies, départements, spatial blocks — and the wild cluster bootstrap with <span class="math inline">\(B = 2000\)</span> all reject as well, see Table <a href="#tbl-spectests" class="quarto-xref">Table 10</a>), and the Vuong test strongly prefers the hurdle over the plain Poisson (<span class="math inline">\(V = 31.86\)</span>, <span class="math inline">\(p = &lt;0.001\)</span>; convention <span class="math inline">\(m = \ell_{\mathrm{Poisson}} - \ell_{\mathrm{Hurdle}}\)</span>, so <span class="math inline">\(V &lt; 0\)</span> means the hurdle is preferred) — consistent with the AIC (Table <a href="#tbl-aic" class="quarto-xref">Table 7</a>) and with the fact that the hurdle-Poisson model predicts the 362 observed zeros exactly (Table <a href="#tbl-freq" class="quarto-xref">Table 8</a>).</p>
+<p>The raw Var/Mean ratio is 12.70, but it is driven by the zero mass and by between-city heterogeneity in <span class="math inline">\(\mu\)</span> (the Paris outlier): the Cameron–Trivedi test on the fitted M4 does <strong>not</strong> reject equidispersion (<span class="math inline">\(z = -0.686\)</span>, <span class="math inline">\(p = 0.754\)</span>; <span class="math inline">\(\hat\alpha \approx -0.008\)</span>), which is why NB2 degenerates (<span class="math inline">\(\theta \to \infty\)</span>, an AIC artifact). The real problem is the <strong>zero probability</strong>: the Van den Broek test rejects <span class="math inline">\(H_0\)</span> (<span class="math inline">\(z = -3.269\)</span>, <span class="math inline">\(p = 0.001\)</span> in the iid version; the cluster-robust versions — académies, départements, spatial blocks — and the wild cluster bootstrap with <span class="math inline">\(B = 2000\)</span> also reject, see Table <a href="#tbl-spectests" class="quarto-xref">Table 10</a>), and the Vuong test strongly prefers the hurdle over the plain Poisson (<span class="math inline">\(V = -31.86\)</span>, <span class="math inline">\(p = &lt;0.001\)</span>; convention <span class="math inline">\(m = \ell_{\mathrm{Hurdle}} - \ell_{\mathrm{Poisson}}\)</span>, so <span class="math inline">\(V &gt; 0\)</span> means the hurdle is closer to the true DGP; the cluster-robust and wild-bootstrap versions in Table <a href="#tbl-spectests" class="quarto-xref">Table 10</a> reject as well) — consistent with the AIC (Table <a href="#tbl-aic" class="quarto-xref">Table 7</a>) and with the hurdle-Poisson predicting the 362 observed zeros exactly (Table <a href="#tbl-freq" class="quarto-xref">Table 8</a>).</p>
 </section>
 <section id="bootstrap-of-the-fe-effect-on-the-segregation-coefficients" class="level2" data-number="5.2">
 <h2 data-number="5.2" class="anchored" data-anchor-id="bootstrap-of-the-fe-effect-on-the-segregation-coefficients"><span class="header-section-number">5.2</span> Bootstrap of the FE effect on the segregation coefficients</h2>
@@ -3971,7 +4024,7 @@ Table 12: Monte Carlo: bias, empirical SD, average SE, 95% coverage (M = 200 re
 <td style="text-align: left;">-0.0014</td>
 <td style="text-align: left;">0.0480</td>
 <td style="text-align: left;">0.0434</td>
-<td style="text-align: left;">0.930</td>
+<td style="text-align: left;">0.935</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Poisson</td>
@@ -3984,18 +4037,18 @@ Table 12: Monte Carlo: bias, empirical SD, average SE, 95% coverage (M = 200 re
 <tr class="odd">
 <td style="text-align: left;">NB2 (size=1.5)</td>
 <td style="text-align: left;">Poisson</td>
-<td style="text-align: left;">0.0004</td>
-<td style="text-align: left;">0.0829</td>
+<td style="text-align: left;">-0.0017</td>
+<td style="text-align: left;">0.0835</td>
 <td style="text-align: left;">0.0434</td>
-<td style="text-align: left;">0.720</td>
+<td style="text-align: left;">0.715</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">NB2 (size=1.5)</td>
 <td style="text-align: left;">NB2</td>
-<td style="text-align: left;">-0.0009</td>
-<td style="text-align: left;">0.0646</td>
+<td style="text-align: left;">-0.0029</td>
+<td style="text-align: left;">0.0651</td>
 <td style="text-align: left;">0.0626</td>
-<td style="text-align: left;">0.945</td>
+<td style="text-align: left;">0.950</td>
 </tr>
 </tbody>
 </table>
@@ -4135,7 +4188,7 @@ Table 14: Reverse regressions: segregation index ~ y + controls (± region-acad
 <tr class="odd">
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
 <td style="text-align: left;">no</td>
-<td style="text-align: left;">-0.0695</td>
+<td style="text-align: left;">-0.0696</td>
 <td style="text-align: left;">0.0156</td>
 <td style="text-align: left;">-4.46</td>
 <td style="text-align: left;">&lt;0.001</td>
@@ -4337,7 +4390,7 @@ Table 16: The four segregation coefficients across alternative specifications (
 <tr class="odd">
 <td style="text-align: left;">M4 without Paris/Lyon/Marseille</td>
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: left;">-0.0679</td>
+<td style="text-align: left;">-0.0678</td>
 <td style="text-align: left;">0.0285</td>
 <td style="text-align: left;">0.017</td>
 </tr>
@@ -4366,7 +4419,7 @@ Table 16: The four segregation coefficients across alternative specifications (
 <td style="text-align: left;">M4 without z_moran</td>
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
 <td style="text-align: left;">-0.0114</td>
-<td style="text-align: left;">0.0473</td>
+<td style="text-align: left;">0.0472</td>
 <td style="text-align: left;">0.809</td>
 </tr>
 <tr class="even">
@@ -4393,8 +4446,8 @@ Table 16: The four segregation coefficients across alternative specifications (
 <tr class="odd">
 <td style="text-align: left;">M4, y = private under contract</td>
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: left;">-0.0905</td>
-<td style="text-align: left;">0.0461</td>
+<td style="text-align: left;">-0.0904</td>
+<td style="text-align: left;">0.0460</td>
 <td style="text-align: left;">0.050</td>
 </tr>
 <tr class="even">
@@ -4421,8 +4474,8 @@ Table 16: The four segregation coefficients across alternative specifications (
 <tr class="odd">
 <td style="text-align: left;">M4, cluster = département</td>
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: left;">-0.0442</td>
-<td style="text-align: left;">0.0394</td>
+<td style="text-align: left;">-0.0441</td>
+<td style="text-align: left;">0.0393</td>
 <td style="text-align: left;">0.262</td>
 </tr>
 <tr class="even">
@@ -4449,7 +4502,7 @@ Table 16: The four segregation coefficients across alternative specifications (
 <tr class="odd">
 <td style="text-align: left;">Hurdle-Pois, count part</td>
 <td style="text-align: left;">Theil <span class="math inline">\(T\)</span> (z)</td>
-<td style="text-align: left;">-0.0682</td>
+<td style="text-align: left;">-0.0681</td>
 <td style="text-align: left;">–</td>
 <td style="text-align: left;">–</td>
 </tr>
@@ -4485,7 +4538,7 @@ Table 16: The four segregation coefficients across alternative specifications (
 </section>
 <section id="discussion" class="level1" data-number="6">
 <h1 data-number="6"><span class="header-section-number">6</span> Discussion</h1>
-<p>The results point to a clear mechanism: <strong>it is the spatial structure of segregation, not the overall level of inequality, that is associated with the supply of private <em>collèges</em></strong>. Theil is strongly positive in the naive M0 (0.5317*<strong>) but becomes insignificant as soon as population size is controlled — the raw correlation between inequality and private schools is largely a </strong>size/composition effect**. Moran’s I, in contrast, is stable across M2–M4 and significant in M4 (IRR ≈ 1.13, AME ≈ +0.18 collège per +1 SD): cities where rich and poor cells cluster together have more private <em>collèges</em>, consistent with catchment areas that mix (or fail to mix) social groups and with cream-skimming by private schools. Polarization is negative (fewer private schools in bimodal cities), and exposure <span class="math inline">\(P_{xx}\)</span> is not significant on the intensive margin once Moran is controlled — the two are correlated but Moran captures the relevant within-catchment sorting.</p>
+<p>The results point to a clear mechanism: <strong>it is the spatial structure of segregation, not the overall level of inequality, that is associated with the supply of private <em>collèges</em></strong>. Theil is strongly positive in the naive M0 (0.5310*<strong>) but becomes insignificant as soon as population size is controlled — the raw correlation between inequality and private schools is largely a </strong>size/composition effect**. Moran’s I, in contrast, is stable across M2–M4 and significant in M4 (IRR ≈ 1.13, AME ≈ +0.18 collège per +1 SD): cities where rich and poor cells cluster together have more private <em>collèges</em>, consistent with catchment areas that mix (or fail to mix) social groups and with cream-skimming by private schools. Polarization is negative (fewer private schools in bimodal cities), and exposure <span class="math inline">\(P_{xx}\)</span> is not significant on the intensive margin once Moran is controlled — the two are correlated but Moran captures the relevant within-catchment sorting.</p>
 <p>Several caveats apply. This is a <strong>cross-section</strong>: no causal claim is made, and the reverse regressions (table <a href="#tbl-revreg" class="quarto-xref">Table 14</a>) are the check against simultaneity — with regional FE, the coefficient of <span class="math inline">\(y\)</span> on the segregation indices is small, so reverse causality on the intensive margin appears limited, but the supply of private schools may still respond to segregation (Zhan, 2018; Koller and Welsch, 2017). The zero mass (39.1%) is handled by the hurdle model, which is preferred by AIC/BIC and Vuong; there is no significant overdispersion (Cameron–Trivedi), so NB2 degenerates — but the Monte Carlo shows that if the DGP were overdispersed, Poisson SEs would be too small, hence the cluster-robust SEs. Residual spatial autocorrelation (Moran I on residuals) justifies the clustering and the spatial-block CV. Finally, Paris (y = 103) is an outlier; dropping the three PLM cities does not change the signs (table <a href="#tbl-robust" class="quarto-xref">Table 16</a>).</p>
 </section>
 <section id="conclusion" class="level1" data-number="7">

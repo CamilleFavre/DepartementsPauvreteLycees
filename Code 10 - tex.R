@@ -252,33 +252,37 @@ if (!is.null(c7)) {
   
   section("TABLEAU 11 - Tests de spécification", {
     ct1 <- dispersiontest(m_p, trafo = 1)
-    rob <- c7$vdB_rob
-    has_rob <- !is.null(rob)
+    rob  <- c7$vdB_rob
+    vrob <- c7$vuong_rob
+    has_rob  <- !is.null(rob)
+    has_vrob <- !is.null(vrob)
     gv <- function(x) if (is.null(x)) NA_real_ else x
     
-    vdb_z <- if (has_rob) rob$iid$z else c7$tab_spec$stat[2]
-    vdb_p <- if (has_rob) rob$iid$p else c7$tab_spec$p[2]
+    vdb_z <- if (has_rob) rob$iid[["z"]]  else c7$tab_spec$stat[2]
+    vdb_p <- if (has_rob) rob$iid[["p"]]  else c7$tab_spec$p[2]
+    vuo_V <- if (has_vrob) vrob$iid[["V"]] else c7$tab_spec$stat[3]
+    vuo_p <- if (has_vrob) vrob$iid[["p"]] else c7$tab_spec$p[3]
     
     ts <- data.frame(
       Test = c("Cameron-Trivedi $\\hat\\alpha$ (trafo=2, NB2)",
                "Cameron-Trivedi (trafo=1, NB1) : z",
                "Van den Broek (iid)",
-               "Vuong Hurdle-Pois vs Poisson"),
-      Statistique = c(f3(c7$tab_spec$stat[1]), f3(ct1$statistic), f3(vdb_z), f2(c7$tab_spec$stat[3])),
-      p = c(fmtp(c7$tab_spec$p[1]), fmtp(ct1$p.value), fmtp(vdb_p), fmtp(c7$tab_spec$p[3])),
+               "Vuong Hurdle-Pois vs Poisson (iid)"),
+      Statistique = c(f3(c7$tab_spec$stat[1]), f3(ct1$statistic), f3(vdb_z), f2(vuo_V)),
+      p = c(fmtp(c7$tab_spec$p[1]), fmtp(ct1$p.value), fmtp(vdb_p), fmtp(vuo_p)),
       stringsAsFactors = FALSE)
     
+    # --- Van den Broek : versions cluster-robustes ---
     if (has_rob) {
       lab <- c("VdB cluster académie (G=13)", "VdB cluster département (G=96)")
-      zz  <- c(gv(rob$acad$z),  gv(rob$dept$z))
-      pp  <- c(gv(rob$acad$p),  gv(rob$dept$p))
+      zz  <- c(gv(rob$acad[["z"]]),  gv(rob$dept[["z"]]))
+      pp  <- c(gv(rob$acad[["p"]]),  gv(rob$dept[["p"]]))
       if (!is.null(rob$block)) {
         lab <- c(lab, "VdB blocs spatiaux k=10 (G=10)")
-        zz  <- c(zz, gv(rob$block$z)); pp <- c(pp, gv(rob$block$p))
+        zz  <- c(zz, gv(rob$block[["z"]])); pp <- c(pp, gv(rob$block[["p"]]))
       }
       ts <- rbind(ts, data.frame(Test = lab, Statistique = f3(zz), p = fmtp(pp),
                                  stringsAsFactors = FALSE))
-      # wild cluster bootstrap (Rademacher, B=2000) : on ne reporte que la p-value
       if (!is.null(rob$wild_acad)) {
         wlab <- c("VdB wild bootstrap B=2000 : académie (G=13)",
                   "VdB wild bootstrap : département (G=96)")
@@ -292,17 +296,42 @@ if (!is.null(c7)) {
       }
     }
     
+    # --- Vuong : versions cluster-robustes (V > 0 = Hurdle préféré) ---
+    if (has_vrob) {
+      lab <- c("Vuong cluster académie (G=13)", "Vuong cluster département (G=96)")
+      vv  <- c(gv(vrob$acad[["V"]]),  gv(vrob$dept[["V"]]))
+      pp  <- c(gv(vrob$acad[["p"]]),  gv(vrob$dept[["p"]]))
+      if (!is.null(vrob$block)) {
+        lab <- c(lab, "Vuong blocs spatiaux k=10 (G=10)")
+        vv  <- c(vv, gv(vrob$block[["V"]])); pp <- c(pp, gv(vrob$block[["p"]]))
+      }
+      ts <- rbind(ts, data.frame(Test = lab, Statistique = f2(vv), p = fmtp(pp),
+                                 stringsAsFactors = FALSE))
+      if (!is.null(vrob$wild_acad)) {
+        wlab <- c("Vuong wild bootstrap B=2000 : académie (G=13)",
+                  "Vuong wild bootstrap : département (G=96)")
+        wp <- c(gv(vrob$wild_acad[["p_wild"]]), gv(vrob$wild_dept[["p_wild"]]))
+        if (!is.null(vrob$wild_block)) {
+          wlab <- c(wlab, "Vuong wild bootstrap : blocs spatiaux (G=10)")
+          wp   <- c(wp, gv(vrob$wild_block[["p_wild"]]))
+        }
+        ts <- rbind(ts, data.frame(Test = wlab, Statistique = "--", p = fmtp(wp),
+                                   stringsAsFactors = FALSE))
+      }
+    }
+    
+    note11 <- paste0(
+      "CT : test de $\\alpha=0$ dans Var(y|x) = mu + alpha*g(mu) (trafo=2 : g=mu^2, NB2, z = -0.686, p = 0.754 ; ",
+      "trafo=1 : g=mu, NB1, z = -3.779, p = 1.000) : pas de surdispersion conditionnelle. ",
+      "Van den Broek : test bilatéral de la probabilité de zéro du Poisson ; iid z = ", f3(vdb_z), " (p = ", fmtp(vdb_p),
+      ") ; cluster-robuste (académies, départements, blocs spatiaux k-means k=10) + wild cluster bootstrap (Rademacher, B = 2000) : ",
+      "H0 rejetée dans toutes les configurations. ",
+      "Vuong : m = ll_Hurdle - ll_Poisson, V > 0 = Hurdle préféré ; iid V = ", f2(vuo_V), " (p = ", fmtp(vuo_p), ") ; ",
+      if (has_vrob) paste0("cluster académie V = ", f2(gv(vrob$acad[["V"]])), " (p = ", fmtp(gv(vrob$acad[["p"]])),
+                           ", wild p = ", fmtp(gv(vrob$wild_acad[["p_wild"]])), "), département V = ", f2(gv(vrob$dept[["V"]])),
+                           ", blocs V = ", f2(gv(vrob$block[["V"]])), " : rejet robuste à la dépendance spatiale.") else "")
     tex_tab(ts, c("Test", "Statistique", "p"), "lrr",
-            "Tests de spécification", "tab:spectests",
-            note = paste0("CT : test de $\\alpha=0$ dans Var(y|x) = mu + alpha*g(mu) ",
-                          "(trafo=2 : g=mu^2, NB2, z = -0.686, p = 0.754 ; trafo=1 : g=mu, NB1, ",
-                          "z = -3.779, p = 1.000) : pas de surdispersion conditionnelle. ",
-                          "Van den Broek : test bilatéral de la probabilité de zéro du Poisson ; ",
-                          "iid z = -3.269 (p = 0.001) ; versions cluster-robustes (académies, ",
-                          "départements, blocs spatiaux k-means k=10) et wild cluster bootstrap ",
-                          "(Rademacher, B = 2000) : H0 rejetée dans toutes les configurations. ",
-                          "Vuong : m = ll_Poisson - ll_Hurdle = -31.86, p < 0.001 ; ",
-                          "signe négatif = Hurdle préféré."))
+            "Tests de spécification", "tab:spectests", note = note11)
   })
   
   section("TABLEAU 12 - Bootstrap cluster de l'écart beta(M4)-beta(M3)", {

@@ -120,15 +120,33 @@ The dependent variable is the **number of private *collèges* per city** $y_i$ (
 :::
 
 ```{r tbl-desc}
-vars_m4 <- setdiff(all.vars(formules$M4), c("y", "region_acad"))
+# mapping z -> colonne brute (noms relevés via names(d_mod))
+raw_map <- c(z_theil = "theil_revenu", z_moran = "moran_I_rev",
+             z_exposition_riches = "exposition_riches", z_polarisation = "polarisation")
+raw_lab <- c(z_theil = "Theil $T_c$", z_moran = "Moran $I_c$",
+             z_exposition_riches = "Exposure $P_{xx,c}$", z_polarisation = "Wolfson $W_c$")
+
+# vérif : chaque z_* doit être le scale() de sa colonne brute
+# (vrai depuis que Code 4b standardise sur d_mod, N = 925 ; sinon simple warning)
+chk <- sapply(names(raw_map), function(z)
+  isTRUE(all.equal(as.numeric(scale(d_mod[[raw_map[[z]]]])), d_mod[[z]], tolerance = 1e-6)))
+if (!all(chk))
+  warning("z != scale(brut) pour : ", paste(names(chk)[!chk], collapse = ", "),
+          " (z standardisé hors échantillon ?)")
+
+vars_m4  <- setdiff(all.vars(formules$M4), c("y", "region_acad"))
+vars_use <- unname(ifelse(vars_m4 %in% names(raw_map), raw_map[vars_m4], vars_m4))
+lab      <- unname(ifelse(vars_m4 %in% names(raw_lab), raw_lab[vars_m4], vlab(vars_m4)))
+
 desc <- data.frame(
-  Variable = vlab(vars_m4),
-  Mean    = sprintf("%.2f", sapply(d_mod[, vars_m4], mean, na.rm = TRUE)),
-  SD      = sprintf("%.2f", sapply(d_mod[, vars_m4], sd, na.rm = TRUE)),
-  Min     = sprintf("%.2f", sapply(d_mod[, vars_m4], min, na.rm = TRUE)),
-  Median  = sprintf("%.2f", sapply(d_mod[, vars_m4], median, na.rm = TRUE)),
-  Max     = sprintf("%.2f", sapply(d_mod[, vars_m4], max, na.rm = TRUE)))
-knitr::kable(desc, caption = paste0("Descriptive statistics of the M4 variables (N = ", N, " cities; Paris, Lyon and Marseille merged into single cities)."))
+  Variable = lab,
+  Mean     = sprintf("%.2f", sapply(d_mod[, vars_use], mean,   na.rm = TRUE)),
+  SD       = sprintf("%.2f", sapply(d_mod[, vars_use], sd,     na.rm = TRUE)),
+  Min      = sprintf("%.2f", sapply(d_mod[, vars_use], min,    na.rm = TRUE)),
+  Median   = sprintf("%.2f", sapply(d_mod[, vars_use], median, na.rm = TRUE)),
+  Max      = sprintf("%.2f", sapply(d_mod[, vars_use], max,    na.rm = TRUE)))
+knitr::kable(desc, caption = paste0("Descriptive statistics of the M4 variables (N = ", N,
+  " cities; Paris, Lyon and Marseille merged into single cities). The four segregation indices are shown in raw units (Theil >= 0, Moran in [-1,1], Pxx in [0.25,1], Wolfson >= 0); in models M0--M4 they enter as z-scores, so coefficients and AMEs are per +1 SD."))
 ```
 
 The distribution of $y$ is strongly zero-inflated and skewed:
@@ -555,25 +573,26 @@ The AME of Moran's I is `r sprintf("%.4f", sapply("z_moran", ame_num, m = m_p, d
 ## Specification tests
 
 ```{r tbl-spectests, echo=FALSE, warning=FALSE, message=FALSE}
-#  tbl-cap: "Tests de spécification sur le Poisson M4 (N = 925). CT : surdispersion ; Van den Broek : probabilité de zéro (versions cluster-robustes lues dans code7.rds) ; Vuong : Hurdle vs Poisson."
+#| tbl-cap: "Specification tests on the Poisson M4 (N = 925). CT: overdispersion; Van den Broek: zero probability (cluster-robust versions from code7.rds); Vuong: Hurdle vs Poisson (V > 0 = Hurdle closer)."
 
-rob <- if (!is.null(c7)) c7$vdB_rob else NULL
+rob  <- if (!is.null(c7)) c7$vdB_rob   else NULL
+vrob <- if (!is.null(c7)) c7$vuong_rob else NULL
 h   <- modeles$Hurdle_Pois
 m_p <- modeles$Poisson
 d   <- d_mod
 
-# --- Vuong, recalculé avec termes clampés (plus de NaN) ---
+# --- Vuong, recomputed with clamped terms ; convention m = ll_Hurdle - ll_Poisson => V > 0 = Hurdle preferred ---
 mu_p <- fitted(m_p)
 mu_h <- pmax(predict(h, type = "count"), 1e-10)
 pi_h <- pmin(pmax(predict(h, type = "zero"), 1e-10), 1 - 1e-10)
 ll_p <- dpois(d$y, mu_p, log = TRUE)
 ll_h <- ifelse(d$y == 0, log(pi_h),
                log(1 - pi_h) + dpois(d$y, mu_h, log = TRUE) - log(1 - dpois(0, mu_h)))
-m_i <- ll_p - ll_h                      # convention : m < 0 = Hurdle préféré
+m_i <- ll_h - ll_p
 vuong_stat <- sum(m_i) / (sqrt(nrow(d)) * sd(m_i))
 vuong_p    <- 2 * pnorm(-abs(vuong_stat))
 
-# --- Van den Broek : depuis code7.rds (vdB_rob), sinon recalcul iid ---
+# --- Van den Broek from code7.rds (vdB_rob), else iid recompute ---
 if (!is.null(rob)) {
   z_iid  <- rob$iid[["z"]];   p_iid  <- rob$iid[["p"]]
   z_acad <- rob$acad[["z"]];  p_acad <- rob$acad[["p"]]
@@ -590,14 +609,29 @@ if (!is.null(rob)) {
   pw_acad <- pw_dept <- pw_blk <- NA_real_
 }
 
+# --- Vuong cluster-robust / wild from code7.rds (vuong_rob) ---
+if (!is.null(vrob)) {
+  v_acad <- vrob$acad[["V"]];   pv_acad <- vrob$acad[["p"]]
+  v_dept <- vrob$dept[["V"]];   pv_dept <- vrob$dept[["p"]]
+  v_blk  <- if (!is.null(vrob$block)) vrob$block[["V"]] else NA_real_
+  pv_blk <- if (!is.null(vrob$block)) vrob$block[["p"]] else NA_real_
+  vw_acad <- if (!is.null(vrob$wild_acad))  vrob$wild_acad[["p_wild"]]  else NA_real_
+  vw_dept <- if (!is.null(vrob$wild_dept))  vrob$wild_dept[["p_wild"]]  else NA_real_
+  vw_blk  <- if (!is.null(vrob$wild_block)) vrob$wild_block[["p_wild"]] else NA_real_
+} else {
+  v_acad <- pv_acad <- v_dept <- pv_dept <- v_blk <- pv_blk <- NA_real_
+  vw_acad <- vw_dept <- vw_blk <- NA_real_
+}
+
 # alias pour le texte inline après le chunk
 z_vdb <- z_iid
 p_vdb <- p_iid
 
+f2    <- function(x) ifelse(is.na(x), "--", sprintf("%.2f", x))
 f3    <- function(x) ifelse(is.na(x), "--", sprintf("%.3f", x))
 fmtp2 <- function(p) ifelse(is.na(p), "--", ifelse(p < 0.001, "< 0.001", sprintf("%.3f", p)))
 
-ct2 <- AER::dispersiontest(m_p, trafo = 2)   # NB2 : z = -0.686, p = 0.754 (unilatéral)
+ct2 <- AER::dispersiontest(m_p, trafo = 2)   # NB2 : z = -0.686, p = 0.754
 ct1 <- AER::dispersiontest(m_p, trafo = 1)   # NB1 : z = -3.779, p = 1.000
 
 tab <- data.frame(
@@ -610,17 +644,26 @@ tab <- data.frame(
            "VdB wild cluster bootstrap B = 2000 (académies)",
            "VdB wild bootstrap (départements)",
            "VdB wild bootstrap (blocs spatiaux)",
-           "Vuong Hurdle-Pois vs Poisson"),
-  Statistique = c(f3(ct2$statistic), f3(ct1$statistic), f3(z_iid), f3(z_acad), f3(z_dept),
-                  f3(z_blk), "--", "--", "--", f3(vuong_stat)),
-  p = c(fmtp2(ct2$p.value), fmtp2(ct1$p.value), fmtp2(p_iid), fmtp2(p_acad), fmtp2(p_dept),
-        fmtp2(p_blk), fmtp2(pw_acad), fmtp2(pw_dept), fmtp2(pw_blk), fmtp2(vuong_p)),
+           "Vuong Hurdle vs Poisson (iid)",
+           "Vuong cluster académie (G = 13)",
+           "Vuong cluster département (G = 96)",
+           "Vuong blocs spatiaux k-means, k = 10",
+           "Vuong wild cluster bootstrap B = 2000 (académies)",
+           "Vuong wild bootstrap (départements)",
+           "Vuong wild bootstrap (blocs spatiaux)"),
+  Statistique = c(f3(ct2$statistic), f3(ct1$statistic), f3(z_iid), f3(z_acad), f3(z_dept), f3(z_blk),
+                  "--", "--", "--",
+                  f2(vuong_stat), f2(v_acad), f2(v_dept), f2(v_blk), "--", "--", "--"),
+  p = c(fmtp2(ct2$p.value), fmtp2(ct1$p.value), fmtp2(p_iid), fmtp2(p_acad), fmtp2(p_dept), fmtp2(p_blk),
+        fmtp2(pw_acad), fmtp2(pw_dept), fmtp2(pw_blk),
+        fmtp2(vuong_p), fmtp2(pv_acad), fmtp2(pv_dept), fmtp2(pv_blk),
+        fmtp2(vw_acad), fmtp2(vw_dept), fmtp2(vw_blk)),
   stringsAsFactors = FALSE
 )
 knitr::kable(tab, format = "pipe", align = "lrr")
 ```
 
-The raw Var/Mean ratio is `r sprintf("%.2f", var(d_mod$y)/mean(d_mod$y))`, but it is driven by the zero mass and by between-city heterogeneity in $\mu$ (the Paris outlier): the Cameron–Trivedi test on the fitted M4 does **not** reject equidispersion ($z = `r sprintf("%.3f", ct2$statistic)`$, $p = `r fmt_p(ct2$p.value)`$; $\hat\alpha \approx -0.008$), which is why NB2 degenerates ($\theta \to \infty$, an AIC artifact). The real problem is the **zero probability**: the Van den Broek test rejects $H_0$ ($z = `r sprintf("%.3f", z_vdb)`$, $p = `r fmt_p(p_vdb)`$ in the iid version; the cluster-robust versions — académies, départements, spatial blocks — and the wild cluster bootstrap with $B = 2000$ all reject as well, see Table @tbl-spectests), and the Vuong test strongly prefers the hurdle over the plain Poisson ($V = `r sprintf("%.2f", vuong_stat)`$, $p = `r fmt_p(vuong_p)`$; convention $m = \ell_{\mathrm{Poisson}} - \ell_{\mathrm{Hurdle}}$, so $V < 0$ means the hurdle is preferred) — consistent with the AIC (Table @tbl-aic) and with the fact that the hurdle-Poisson model predicts the 362 observed zeros exactly (Table @tbl-freq).
+The raw Var/Mean ratio is `r sprintf("%.2f", var(d_mod$y)/mean(d_mod$y))`, but it is driven by the zero mass and by between-city heterogeneity in $\mu$ (the Paris outlier): the Cameron–Trivedi test on the fitted M4 does **not** reject equidispersion ($z = `r sprintf("%.3f", ct2$statistic)`$, $p = `r fmt_p(ct2$p.value)`$; $\hat\alpha \approx -0.008$), which is why NB2 degenerates ($\theta \to \infty$, an AIC artifact). The real problem is the **zero probability**: the Van den Broek test rejects $H_0$ ($z = `r sprintf("%.3f", z_vdb)`$, $p = `r fmt_p(p_vdb)`$ in the iid version; the cluster-robust versions — académies, départements, spatial blocks — and the wild cluster bootstrap with $B = 2000$ also reject, see Table @tbl-spectests), and the Vuong test strongly prefers the hurdle over the plain Poisson ($V = `r sprintf("%.2f", vuong_stat)`$, $p = `r fmt_p(vuong_p)`$; convention $m = \ell_{\mathrm{Hurdle}} - \ell_{\mathrm{Poisson}}$, so $V > 0$ means the hurdle is closer to the true DGP; the cluster-robust and wild-bootstrap versions in Table @tbl-spectests reject as well) — consistent with the AIC (Table @tbl-aic) and with the hurdle-Poisson predicting the 362 observed zeros exactly (Table @tbl-freq).
 
 ## Bootstrap of the FE effect on the segregation coefficients
 
