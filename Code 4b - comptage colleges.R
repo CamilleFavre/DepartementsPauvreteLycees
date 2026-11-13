@@ -63,6 +63,8 @@ stopifnot("z_exposition_riches" %in% names(d), "z_polarisation" %in% names(d))
 cat("Villes avec indicateurs 2c :", sum(!is.na(d$z_exposition_riches)), "/", nrow(d), "\n")
 cat("Villes sans indicateurs 2c :", d[is.na(d$z_exposition_riches),]$nom_commune, "\n")
 
+d_out <- d[is.na(d$z_exposition_riches),]
+
 # ---------------------------------------------------------------------
 # 2. ACADÉMIE (fine) + RÉGION ACADÉMIQUE (13, pour FE/cluster)
 # ---------------------------------------------------------------------
