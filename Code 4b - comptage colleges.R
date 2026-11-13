@@ -43,6 +43,7 @@ map_plm <- function(code) {
 # 1. LECTURE + JOINTURE INDICATEURS SÉGRÉGATION (Code 2c) — VERSION BLINDÉE
 # ---------------------------------------------------------------------
 d <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_colleges.parquet"))
+d_all <- read_parquet(file.path(DOSSIER_OUT, "df_analyse_all.parquet"))
 colnames(d)
 df_segreg <- read_parquet(file.path(DOSSIER_OUT, "df_segregation_complementaire.parquet"))
 colnames(df_segreg)
@@ -60,6 +61,7 @@ d <- d %>% select(-matches(
 d <- d %>% left_join(df_segreg, by = "code_insee")
 stopifnot("z_exposition_riches" %in% names(d), "z_polarisation" %in% names(d))
 cat("Villes avec indicateurs 2c :", sum(!is.na(d$z_exposition_riches)), "/", nrow(d), "\n")
+cat("Villes sans indicateurs 2c :", d[is.na(d$z_exposition_riches),]$nom_commune, "\n")
 
 # ---------------------------------------------------------------------
 # 2. ACADÉMIE (fine) + RÉGION ACADÉMIQUE (13, pour FE/cluster)
@@ -232,18 +234,56 @@ tab_stab <- do.call(rbind, lapply(names(fit_pois), function(nm) {
 }))
 print(tab_stab, digits = 3)
 
+
+
 # ---------------------------------------------------------------------
-# 6. TEST JOINT DES FE : LRT (le Wald clusteré est un artefact numérique -> ne pas rapporter)
+# 6. TEST JOINT DES FE RÉGION ACADÉMIQUE (M4)
 # ---------------------------------------------------------------------
 m3 <- glm(formules$M3, family = poisson, data = d_mod)
-lrt_fe <- anova(m3, fit_pois$M4, test = "Chisq")
-cat("\nLRT FE région académique (M3 vs M4) :\n"); print(lrt_fe)
-wt <- tryCatch({   # conservé pour trace, mais JAMAIS à rapporter
-  V <- vcovCL(fit_pois$M4, cluster = d_mod$region_acad, type = "HC1")
-  betas <- coef(fit_pois$M4)[grepl("^region_acad", names(coef(fit_pois$M4)))]
-  W <- as.numeric(t(betas) %*% solve(V[names(betas), names(betas)]) %*% betas)
-  W
-}, error = function(e) NA_real_)
+m4 <- fit_pois$M4                    # alias (les modèles vivent dans fit_pois)
+
+# (a) LRT M3 vs M4 (Poisson, H0 : les 12 dummies region_acad = 0)
+lrt_fe <- anova(m3, m4, test = "Chisq")
+cat("\nLRT FE région académique (M3 vs M4, Poisson) :\n"); print(lrt_fe)   # Chi2(12) = 90.9
+
+# (b) Wald cluster-robust DEPARTEMENT sur les 12 dummies (Poisson)
+V4   <- vcovCL(m4, cluster = d_mod$dept, type = "HC1")
+w_fe <- waldtest(m4, m3, vcov = V4, test = "Chisq")
+print(w_fe)
+tab_wald_fe <- data.frame(stat = w_fe$Chisq[2],
+                          df   = abs(w_fe$Df[2]),
+                          p    = w_fe$`Pr(>Chisq)`[2])
+print(tab_wald_fe)                   # attendu : 163.3, df = 12, p < 2.2e-16
+
+# <- AJOUT HURDLE (corrigé v2) : même pattern que la §8 qui marche (formule bipartite, pas de link/start)
+rhs_txt <- function(v) paste(v, collapse = " + ")
+X_M3 <- setdiff(all.vars(formules$M3), "y")
+X_M4 <- setdiff(all.vars(formules$M4), "y")
+f_h3 <- as.formula(paste("y ~", rhs_txt(X_M3), "|", rhs_txt(X_M3)))
+f_h4 <- as.formula(paste("y ~", rhs_txt(X_M4), "|", rhs_txt(X_M4)))
+
+h3 <- hurdle(f_h3, data = d_mod, dist = "poisson", zero.dist = "binomial")
+h4 <- hurdle(f_h4, data = d_mod, dist = "poisson", zero.dist = "binomial")   # = m_hp de la §8
+
+lrt_fe_hurdle <- lmtest::lrtest(h3, h4)     # df attendu = 12 (count part)
+cat("\nLRT FE dans le HURDLE (count part) :\n"); print(lrt_fe_hurdle)
+
+
+# (d) Wald cluster-dept sur les 12 dummies "count_" du hurdle (Wald manuel = robuste)
+V_h4 <- tryCatch(vcovCL(h4, cluster = d_mod$dept, type = "HC1"),
+                 error = function(e) { message("vcovCL(hurdle) KO: ", e$message); NULL })
+if (!is.null(V_h4)) {
+  rn <- grep("^count_.*region_acad", names(coef(h4)), value = TRUE)   # coef(hurdle) préfixé count_/zero_
+  cat("dummies count trouvées :", length(rn), "\n")
+  b  <- coef(h4)[rn]; Vb <- V_h4[rn, rn]
+  W_h <- as.numeric(t(b) %*% solve(Vb) %*% b)
+  p_h <- pchisq(W_h, df = length(rn), lower.tail = FALSE)
+  tab_wald_fe_hurdle <- data.frame(stat = W_h, df = length(rn), p = p_h)
+  print(tab_wald_fe_hurdle)
+} else {
+  tab_wald_fe_hurdle <- data.frame(stat = NA_real_, df = 12, p = NA_real_)  # -> wild cluster bootstrap (machinerie Code 7)
+}
+
 
 # ---------------------------------------------------------------------
 # 7. NB2 (M4)
@@ -320,8 +360,9 @@ print(sapply(vars_stab, function(v) ame_num(m_p, d_mod, v)))
 # ---------------------------------------------------------------------
 saveRDS(list(
   d_mod = d_mod, modeles = modeles, formules = formules,
-  tab_stab = tab_stab, tab_freq = tab_freq, wald_fe = wt, lrt_fe = lrt_fe,
+  tab_stab = tab_stab, tab_freq = tab_freq, lrt_fe = lrt_fe,
   ct_nb2 = dispersiontest(m_p, trafo = 2),
+  lrt_fe_hurdle = lrt_fe_hurdle, wald_fe_hurdle = tab_wald_fe_hurdle,
   vars_stab = vars_stab, X_SEG = X_SEG, X_CTRL = X_CTRL
 ), file.path(DOSSIER_OUT, "modeles_comptage.rds"))
 cat("modeles_comptage.rds écrit.\n")

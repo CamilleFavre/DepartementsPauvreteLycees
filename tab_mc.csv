@@ -1,5 +1,5 @@
 "dgp","estimateur","biais","sd_emp","mean_se","couv95"
-"Poisson","Poisson",-0.0014,0.048,0.0434,0.935
+"Poisson","Poisson",-0.0019,0.0461,0.0434,0.95
 "Poisson","NB2",NA,NA,NA,NA
-"NB2 (size=1.5)","Poisson",-0.0017,0.0835,0.0434,0.715
-"NB2 (size=1.5)","NB2",-0.0029,0.0651,0.0626,0.95
+"NB2 (size=1.5)","Poisson",-0.0069,0.079,0.0434,0.735
+"NB2 (size=1.5)","NB2",0.0017,0.0635,0.0625,0.955

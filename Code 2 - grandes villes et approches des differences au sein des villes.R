@@ -12,25 +12,12 @@
 #
 # NOUVEAU en v2 :
 #  6. PLUS DE FILTRE DE SIGNIFICATIVITE sur les quadrants HH/LL/HL/LH.
-#     Typologie descriptive exhaustive : chaque carreau est classe
-#     selon (z, wz), sans permutation locale ni FDR. Justification :
-#     avec NSIM permutations, la p-value est plancher a 1/(NSIM+1) ;
-#     le FDR multiplie par n tests -> pour une commune de n < ~300
-#     carreaux, AUCUN carreau ne peut jamais passer le seuil, quelle
-#     que soit la realite des clusters (verifie empiriquement : 100 %
-#     de NS sur les communes rurales). Le test du Moran GLOBAL
-#     (moran.mc) est conserve : il n'est pas concerne par le probleme.
-#  7. PROBLEME DE FRONTIERE TRAITE :
-#     - les carreaux isoles (zero voisin a < 285 m dans la commune,
-#       typiquement en extremite de commune ou dans un ilot entoure de
-#       carreaux sans menage) ne sont plus EXCLUS : ils recourent a un
-#       voisinage kNN (k plus proches voisins dans la commune).
-#     - nouvelle colonne part_carreaux_bord : part des carreaux ayant
-#       un voisinage incomplet (< 8 voisins) -- effet de bord residual,
-#       a utiliser comme variable de controle ou flag qualite.
-#     - NB : les carreaux de bord gardent moins de voisins (3-7), c'est
-#       incompressible si on reste intra-communal ; c'est maintenant
-#       mesure et documente au lieu d'ignore.
+#  7. PROBLEME DE FRONTIERE TRAITE (kNN pour les isoles, part_carreaux_bord)
+#
+# NOUVEAU en v2.1 :
+#  8. POPULATION PAR TRANCHE D'AGE par commune : pop_age_0_3, pop_age_4_5,
+#     pop_age_6_10, pop_age_11_17 (ou 11_14/15_17), ..., pop_age_80p,
+#     pop_age_inc, + pop_moins16 et pop_moins18 (ajouts marques "<- AJOUT")
 # =====================================================================
 
 library(arrow)
@@ -122,9 +109,11 @@ map_plm <- function(code) {
   )
 }
 
+# <- AJOUT : detection des colonnes de tranches d'age (ind_0_3, ..., ind_80p, ind_inc)
+age_cols_of <- function(nm) setdiff(grep("^ind_.+", nm, value = TRUE), "ind_snv")
+
 # ---------------------------------------------------------------------
 # 2. INDICATEURS SPATIAUX (LISA) POUR UNE VARIABLE, DANS UNE COMMUNE
-#    Quadrants SANS filtre de significativite (typologie exhaustive)
 # ---------------------------------------------------------------------
 lisa_variable <- function(x, nb, lw, suffixe) {
   
@@ -135,21 +124,15 @@ lisa_variable <- function(x, nb, lw, suffixe) {
   
   if (!all(is.finite(x)) || sd(x) == 0) return(vide)
   
-  # Standardisation DANS la commune
   z  <- as.numeric(scale(x))
   wz <- lag.listw(lw, z, zero.policy = TRUE)
   
-  # Moran global par permutation (indicateur continu, non filtre)
   mi <- moran.mc(x, lw, nsim = NSIM, zero.policy = TRUE)
   
-  # Quadrants : chaque carreau est classe, sans test statistique.
-  # Exhaustif : les cas d'egalite exacte (z=0 ou wz=0, rares) sont
-  # rattaches au quadrant positif le plus proche.
   quad <- ifelse(wz >= 0,
                  ifelse(z >= 0, "HH", "LH"),
                  ifelse(z >= 0, "HL", "LL"))
   
-  # Contraste local : ecart absolu a la moyenne des voisins
   voisins_moy <- lag.listw(lw, x, zero.policy = TRUE)
   contraste   <- abs(x - voisins_moy)
   
@@ -165,17 +148,13 @@ lisa_variable <- function(x, nb, lw, suffixe) {
 
 # ---------------------------------------------------------------------
 # 3. VOISINAGE INTRA-COMMUNAL AVEC RECOURS kNN POUR LES ISOLES
-#    - dnearneigh (285 m) : voisinage principal
-#    - les carreaux sans AUCUN voisin a 285 m recourent aux K_KNN plus
-#      proches carreaux de la commune (plus d'exclusion)
-#    - part_carreaux_bord : part des carreaux a voisinage incomplet
 # ---------------------------------------------------------------------
 voisinage_commune <- function(coords) {
   nb <- dnearneigh(coords, d1 = 0, d2 = DIST_VOISIN)
   card0 <- card(nb)
   
-  part_isoles <- mean(card0 == 0)   # recourent au kNN
-  part_bord   <- mean(card0 < 8)    # voisinage incomplet (bord, trous)
+  part_isoles <- mean(card0 == 0)
+  part_bord   <- mean(card0 < 8)
   
   if (any(card0 == 0)) {
     kk   <- min(K_KNN, nrow(coords) - 1)
@@ -189,7 +168,6 @@ voisinage_commune <- function(coords) {
   list(nb = nb, part_isoles = part_isoles, part_bord = part_bord)
 }
 
-# Indicateurs spatiaux pour UNE commune
 spatial_commune <- function(d) {
   
   vide <- tibble(
@@ -205,7 +183,6 @@ spatial_commune <- function(d) {
                            "contraste_abs_", "contraste_rel_"), "pauv")))
   )
   
-  # Carreaux exploitables : revenu et taux de pauvrete observes (pas d'imputation)
   d <- d[is.finite(d$revenu_moyen) & is.finite(d$taux_pauvrete) &
            !is.na(d$x_l93) & !is.na(d$y_l93) & d$ind > 0, ]
   n0 <- nrow(d)
@@ -219,9 +196,9 @@ spatial_commune <- function(d) {
   res_pauv <- lisa_variable(d$taux_pauvrete, v$nb, lw, "pauv")
   
   tibble(
-    part_carreaux_isoles = v$part_isoles,   # info : part ayant recours au kNN
-    part_carreaux_bord   = v$part_bord,     # info : part a voisinage incomplet
-    n_carreaux_spatial   = nrow(d),          # PLUS AUCUN carreau n'est exclu
+    part_carreaux_isoles = v$part_isoles,
+    part_carreaux_bord   = v$part_bord,
+    n_carreaux_spatial   = nrow(d),
     !!!res_rev, !!!res_pauv
   )
 }
@@ -251,6 +228,13 @@ for (i in seq_along(files)) {
     stop("Colonnes manquantes dans ", basename(files[i]), " : ",
          paste(manquantes, collapse = ", "))
   
+  # <- AJOUT : quelles tranches d'age dans ce fichier ?
+  age_cols <- age_cols_of(names(df))
+  if (i == 1) cat("tranches d'age trouvees :", paste(age_cols, collapse = ", "), "\n")
+  if (length(age_cols) == 0)
+    warning("PAS de colonnes ind_* dans ", basename(files[i]),
+            " -> pop_age_* seront NA (utiliser le patch carreaux sur modeles_comptage.rds)")
+  
   df <- df %>%
     mutate(
       code_brut      = substr(as.character(lcog_geo), 1, 5),
@@ -266,6 +250,9 @@ for (i in seq_along(files)) {
       nb_carreaux        = n(),
       pop_totale         = sum(ind, na.rm = TRUE),
       men_totale         = sum(men, na.rm = TRUE),
+      # <- AJOUT : population par tranche d'age (pop_ind_0_3, pop_ind_4_5, ..., pop_ind_80p, pop_ind_inc)
+      across(all_of(age_cols), ~ sum(ifelse(is.finite(.x), .x, 0), na.rm = TRUE),
+             .names = "pop_{.col}"),
       part_carreaux_rev  = mean(is.finite(revenu_moyen) & ind > 0, na.rm = TRUE),
       taux_pauv_commune  = ifelse(sum(men, na.rm = TRUE) > 0,
                                   sum(men_pauv, na.rm = TRUE) / sum(men, na.rm = TRUE) * 100,
@@ -283,7 +270,7 @@ for (i in seq_along(files)) {
       .groups = "drop"
     )
   
-  # ---- 5b. Indicateurs spatiaux (communes assez peuplees seulement) ----
+  # ---- 5b. Indicateurs spatiaux ----
   communes_cibles <- res_nonspatial$code_insee[res_nonspatial$pop_totale >= SEUIL_POP_SPATIAL]
   df_cible <- df %>% filter(code_insee %in% communes_cibles)
   
@@ -310,6 +297,31 @@ df_final <- bind_rows(results_list) %>%
   mutate(nom_commune = coalesce(nom_commune, code_insee)) %>%
   select(code_insee, nom_commune, everything())
 
+# <- AJOUT : renommage pop_ind_* -> pop_age_*
+df_final <- df_final %>%
+  rename_with(~ sub("^pop_ind_", "pop_age_", .x), starts_with("pop_ind_"))
+
+# <- AJOUT : agregats <16 ans et <18 ans (selon les tranches disponibles dans le millesime)
+nm <- names(df_final)
+if (all(c("pop_age_0_3", "pop_age_4_5", "pop_age_6_10") %in% nm)) {
+  df_final$pop_moins16 <- df_final$pop_age_0_3 + df_final$pop_age_4_5 + df_final$pop_age_6_10
+  df_final$pop_moins18 <- df_final$pop_moins16
+  if ("pop_age_11_14" %in% nm) {
+    df_final$pop_moins16 <- df_final$pop_moins16 + df_final$pop_age_11_14
+    df_final$pop_moins18 <- df_final$pop_moins18 + df_final$pop_age_11_14
+  }
+  if ("pop_age_15" %in% nm) {
+    df_final$pop_moins16 <- df_final$pop_moins16 + df_final$pop_age_15
+  }
+  if ("pop_age_11_17" %in% nm) {          # tranche 11-17 : les 11-15 ans = 5/7
+    df_final$pop_moins16 <- df_final$pop_moins16 + (5/7) * df_final$pop_age_11_17
+    df_final$pop_moins18 <- df_final$pop_moins18 + df_final$pop_age_11_17
+  }
+  if ("pop_age_15_17" %in% nm) {
+    df_final$pop_moins18 <- df_final$pop_moins18 + df_final$pop_age_15_17
+  }
+}
+
 df_final <- df_final %>%
   mutate(
     part_mixte_rev    = part_HL_rev  + part_LH_rev,
@@ -327,16 +339,24 @@ df_poplarge <- df_final %>%
 write_parquet(df_poplarge, file.path(DOSSIER_OUT, "df_poplarge.parquet"))
 
 # ---------------------------------------------------------------------
-# 7. CONTROLES RAPIDES (a regarder avant toute regression)
+# 7. CONTROLES RAPIDES
 # ---------------------------------------------------------------------
 cat("\nNb de communes (pop > ", SEUIL_POP_LARGE, ") : ", nrow(df_poplarge), "\n", sep = "")
+cat("Colonnes pop_age_* presentes :\n")
+print(grep("^pop_age_|^pop_moins", names(df_poplarge), value = TRUE))   # <- AJOUT
+cat("Somme des tranches d'age / pop_totale (doit valoir ~1) :\n")        # <- AJOUT
+age_sum_cols <- grep("^pop_age_", names(df_poplarge), value = TRUE)
+if (length(age_sum_cols)) {
+  print(summary(rowSums(df_poplarge[, age_sum_cols, drop = FALSE], na.rm = TRUE) /
+                  df_poplarge$pop_totale))
+}
 cat("Couverture du revenu (part de carreaux renseignes), resume :\n")
 print(summary(df_poplarge$part_carreaux_rev))
 cat("Part de carreaux isoles (recours kNN), resume :\n")
 print(summary(df_poplarge$part_carreaux_isoles))
 cat("Part de carreaux de bord (voisinage incomplet), resume :\n")
 print(summary(df_poplarge$part_carreaux_bord))
-cat("Verification : parts HH+LL+HL+LH = 1 partout (quadrants exhaustifs) ?\n")
+cat("Verification : parts HH+LL+HL+LH = 1 partout ?\n")
 print(all(abs((df_poplarge$part_segreg_rev + df_poplarge$part_mixte_rev) - 1) < 1e-8,
           na.rm = TRUE))
 cat("Correlations entre indicateurs principaux :\n")
