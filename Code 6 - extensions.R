@@ -223,7 +223,8 @@ cat("Checkpoint 3 OK\n")
 
 # ---------------------------------------------------------------------
 # 4. SPATIAL COMMUNAL : Moran + SAR sous 2 poids (8-NN, 1/d 200km) ;
-#    Moran des résidus Poisson ET Hurdle ; CV blocs vs aléatoire sous Poisson ET Hurdle
+#    Moran des résidus Poisson ET Hurdle ; CV blocs vs aléatoire sous Poisson ET Hurdle ;
+#    baselines naïves + MAE dans le même protocole
 # ---------------------------------------------------------------------
 # library(pscl) en haut du script (hurdle)
 
@@ -281,8 +282,7 @@ run_moran_sar <- function(lw_x, tag) {
 res_knn <- run_moran_sar(lw,     "8-NN")
 res_idw <- run_moran_sar(lw_idw, "1/d trq 200km")
 
-# alias (principal = 8-NN) + versions IDW
-mt <- res_knn$moran; m_sar <- res_knn$m_sar; sar_rho <- res_knn$sar_rho
+mt <- res_knn$moran; m_sar <- res_knn$m_sar; sar_rho <- res_knn$sar_rho   # alias principal = 8-NN
 moran_idw <- res_idw$moran; m_sar_idw <- res_idw$m_sar; sar_rho_idw <- res_idw$sar_rho
 
 # --- Moran des résidus du HURDLE sous les 2 poids (moran.test car hurdle n'est pas un lm) ---
@@ -295,7 +295,8 @@ if (!is.null(m_h_sp)) {
               moran_h_idw$estimate[1], moran_h_idw$p.value))
 } else { moran_h_knn <- moran_h_idw <- NULL }
 
-# --- CV : 2 modèles (Poisson / Hurdle) x 2 découpages (blocs k=10 / aléatoire 10% x 20) ---
+# ================= CV : 2 modèles x 2 découpages =================
+# /!\ ordre des arguments : (te, fitfun) -> sapply passe l'élément en 1er argument
 f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")  # M4 sans FE
 set.seed(1)
 bloc <- kmeans(scale(coords), centers = 10)$cluster
@@ -303,10 +304,20 @@ bloc <- kmeans(scale(coords), centers = 10)$cluster
 fit_pois <- function(train) glm(f_cv, family = poisson, data = train)
 fit_hurd <- function(train) tryCatch(hurdle(f_cv, data = train, dist = "poisson", zero.dist = "poisson"),
                                      error = function(e) NULL)
-mse_fold <- function(fitfun, te) {                          # te = logique (test)
+
+mse_fold <- function(te, fitfun) {
   m <- fitfun(d_sp[!te, ])
-  if (is.null(m)) return(NA_real_)                         # fold non convergé (hurdle)
-  mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)  # hurdle: predict response = E[y]
+  if (is.null(m)) return(NA_real_)                          # fold non convergé (hurdle)
+  mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)   # hurdle: response = E[y]
+}
+mae_fold <- function(te, fitfun) {
+  m <- fitfun(d_sp[!te, ])
+  if (is.null(m)) return(NA_real_)
+  mean(abs(d_sp$y[te] - predict(m, d_sp[te, ], type = "response")))
+}
+naive_fold <- function(te, mode = c("mean", "zero")) {
+  if (mode == "mean") mean((d_sp$y[te] - mean(d_sp$y[!te]))^2)   # moyenne du train
+  else               mean(d_sp$y[te]^2)                            # toujours 0
 }
 
 blocks_te <- lapply(sort(unique(bloc)), function(b) bloc == b)      # 10 folds spatiaux
@@ -317,10 +328,22 @@ rand_te   <- lapply(1:20, function(r) {                              # 20 folds 
 })
 paris_rd <- sapply(rand_te, function(te) any(d_sp$y[te] == max(d_sp$y)))
 
-err_sp_pois <- sapply(blocks_te, mse_fold, fitfun = fit_pois)
-err_rd_pois <- sapply(rand_te,   mse_fold, fitfun = fit_pois)
-err_sp_hurd <- sapply(blocks_te, mse_fold, fitfun = fit_hurd)
-err_rd_hurd <- sapply(rand_te,   mse_fold, fitfun = fit_hurd)
+err_sp_pois <- sapply(blocks_te, mse_fold, fit_pois)
+err_rd_pois <- sapply(rand_te,   mse_fold, fit_pois)
+err_sp_hurd <- sapply(blocks_te, mse_fold, fit_hurd)
+err_rd_hurd <- sapply(rand_te,   mse_fold, fit_hurd)
+
+mae_sp_pois <- sapply(blocks_te, mae_fold, fit_pois)
+mae_rd_pois <- sapply(rand_te,   mae_fold, fit_pois)
+mae_sp_hurd <- sapply(blocks_te, mae_fold, fit_hurd)
+mae_rd_hurd <- sapply(rand_te,   mae_fold, fit_hurd)
+
+# baselines naïves dans le MÊME protocole (mêmes folds)
+naive_tab <- data.frame(
+  decoupage     = c("blocs k=10", "aléatoire 10% x20"),
+  naive_moyenne = c(mean(sapply(blocks_te, naive_fold, "mean")), mean(sapply(rand_te, naive_fold, "mean"))),
+  naive_zero    = c(mean(sapply(blocks_te, naive_fold, "zero")), mean(sapply(rand_te, naive_fold, "zero"))))
+print(naive_tab)
 
 mse_bloc_pois <- mean(err_sp_pois, na.rm = TRUE)
 mse_bloc_hurd <- mean(err_sp_hurd, na.rm = TRUE)
@@ -329,27 +352,64 @@ tab_cv <- data.frame(
   decoupage = rep(c("CV blocs spatiaux (k-means k=10)", "CV aléatoire (10%, 20 rép.)"), 2),
   mse       = c(mse_bloc_pois, mean(err_rd_pois, na.rm = TRUE),
                 mse_bloc_hurd, mean(err_rd_hurd, na.rm = TRUE)),
+  mae       = c(mean(mae_sp_pois, na.rm = TRUE), mean(mae_rd_pois, na.rm = TRUE),
+                mean(mae_sp_hurd, na.rm = TRUE), mean(mae_rd_hurd, na.rm = TRUE)),
   n_folds_NA = c(sum(is.na(err_sp_pois)), sum(is.na(err_rd_pois)),
                  sum(is.na(err_sp_hurd)), sum(is.na(err_rd_hurd))))
-tab_cv$ratio_vs_blocs <- tab_cv$mse / rep(c(mse_bloc_pois, mse_bloc_hurd), each = 2)
+tab_cv$ratio_vs_blocs   <- tab_cv$mse / rep(c(mse_bloc_pois, mse_bloc_hurd), each = 2)
+tab_cv$mse_naive_moy    <- rep(naive_tab$naive_moyenne, 2)     # lignes 1,2 = blocs ; 3,4 = aléa
+tab_cv$skill_vs_naive   <- 1 - tab_cv$mse / tab_cv$mse_naive_moy
 print(tab_cv)
 write.csv(tab_cv, file.path(DOSSIER_OUT, "tab_cv.csv"), row.names = FALSE)
+write.csv(naive_tab, file.path(DOSSIER_OUT, "tab_cv_naive.csv"), row.names = FALSE)
 
-p_cv <- ggplot(tab_cv, aes(decoupage, mse, fill = decoupage)) +
+# --- diagnostic : écart hurdle - Poisson par bloc (Paris ?) ---
+cmp <- data.frame(bloc = sort(unique(bloc)), n = as.integer(table(bloc)),
+                  mse_pois = err_sp_pois, mse_hurd = err_sp_hurd)
+cmp$diff <- cmp$mse_hurd - cmp$mse_pois
+print(cmp[order(-cmp$diff), ])
+i_paris <- which.max(d_sp$y); cat("bloc de Paris :", bloc[i_paris], "\n")
+
+# décomposition dans le fold du bloc de Paris : zéros vs positifs, ligne Paris
+b <- bloc[i_paris]; te <- bloc == b
+m_pois <- glm(f_cv, family = poisson, data = d_sp[!te, ])
+m_hurd <- hurdle(f_cv, data = d_sp[!te, ], dist = "poisson", zero.dist = "poisson")
+tst <- data.frame(y = d_sp$y[te],
+                  yhat_pois = predict(m_pois, d_sp[te, ], type = "response"),
+                  yhat_hurd = predict(m_hurd, d_sp[te, ], type = "response"))
+tst$sq_pois <- (tst$y - tst$yhat_pois)^2; tst$sq_hurd <- (tst$y - tst$yhat_hurd)^2
+cat("MSE zéros (y=0)   pois/hurd :", mean(tst$sq_pois[tst$y == 0]), "/", mean(tst$sq_hurd[tst$y == 0]), "\n")
+cat("MSE positifs (y>0) pois/hurd :", mean(tst$sq_pois[tst$y > 0]), "/", mean(tst$sq_hurd[tst$y > 0]), "\n")
+print(tst[order(-tst$sq_hurd), ][1:8, ])
+cat("MAE blocs  Poisson :", mean(mae_sp_pois, na.rm = TRUE), " | Hurdle :", mean(mae_sp_hurd, na.rm = TRUE), "\n")
+cat("MAE aléa   Poisson :", mean(mae_rd_pois, na.rm = TRUE), " | Hurdle :", mean(mae_rd_hurd, na.rm = TRUE), "\n")
+
+# --- figure : MSE par modèle x découpage + baseline naïve ---
+plot_df <- rbind(
+  tab_cv[, c("modele", "decoupage", "mse")],
+  data.frame(modele = "Naïf (moy. train)",
+             decoupage = c("CV blocs spatiaux (k-means k=10)", "CV aléatoire (10%, 20 rép.)"),
+             mse = naive_tab$naive_moyenne))
+p_cv <- ggplot(plot_df, aes(decoupage, mse, fill = decoupage)) +
   geom_col(width = 0.6) + geom_text(aes(label = sprintf("%.3f", mse)), vjust = -0.4) +
   facet_wrap(~ modele) + theme_minimal() + theme(legend.position = "none") +
   labs(x = NULL, y = "MSE",
-       title = "CV par blocs spatiaux vs aléatoire, sous Poisson et sous Hurdle",
+       title = "CV par blocs spatiaux vs aléatoire, sous Poisson, Hurdle et modèle naïf",
        subtitle = "La CV aléatoire est dominée par Paris (y = 103) dans le test + fuite spatiale ; la CV par blocs est la référence")
-ggsave(file.path(DOSSIER_OUT, "fig_cv_communes.png"), p_cv, width = 9, height = 5, dpi = 150)
+ggsave(file.path(DOSSIER_OUT, "fig_cv_communes.png"), p_cv, width = 11, height = 5, dpi = 150)
 
-CK("4_spatial", list(tab_cv = tab_cv, bloc = bloc, paris_rd = paris_rd,
+CK("4_spatial", list(tab_cv = tab_cv, naive_tab = naive_tab, cmp = cmp,
+                     bloc = bloc, paris_rd = paris_rd, i_paris = i_paris, tst = tst,
                      err_sp_pois = err_sp_pois, err_rd_pois = err_rd_pois,
                      err_sp_hurd = err_sp_hurd, err_rd_hurd = err_rd_hurd,
+                     mae_sp_pois = mae_sp_pois, mae_rd_pois = mae_rd_pois,
+                     mae_sp_hurd = mae_sp_hurd, mae_rd_hurd = mae_rd_hurd,
                      moran = mt, m_sar = m_sar, sar_rho = sar_rho,
                      moran_idw = moran_idw, m_sar_idw = m_sar_idw, sar_rho_idw = sar_rho_idw, lw_idw = lw_idw,
                      moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw, m_h_sp = m_h_sp))
 cat("Checkpoint 4 OK\n")
+# --- ensuite : blocs Van den Broek / Vuong inchangés, puis saveRDS final étendu
+#     (ajouter moran_idw, sar_rho_idw, lw_idw, moran_h_*, tab_cv, naive_tab, err_*, mae_*, bloc, ...)
 
 # ============ Van den Broek / Vuong cluster-robustes : INCHANGÉS (ils utilisent déjà `bloc`) ============
 # ... (reprendre tels quels les blocs vdB_rob / vuong_rob de ta version) ...
@@ -358,13 +418,17 @@ cat("Checkpoint 4 OK\n")
 # 5. SAUVEGARDE FINALE (étendue : tous les champs spatiaux, y compris IDW et hurdle)
 # ---------------------------------------------------------------------
 saveRDS(list(tab_spec = tab_spec, tab_boot = tab_boot, tab_mc = tab_mc, tab_cv = tab_cv,
+             naive_tab = naive_tab,                       # <-- AJOUT : baselines naïves (mêmes folds CV)
              vuong_rob = vuong_rob, vdB_rob = vdB_rob,
              moran = mt, m_sar = m_sar, sar_rho = sar_rho,
              moran_idw = moran_idw, m_sar_idw = m_sar_idw, sar_rho_idw = sar_rho_idw, lw_idw = lw_idw,
-             moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw,
+             moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw, m_h_sp = m_h_sp,   # <-- AJOUT
              bloc = bloc, paris_rd = paris_rd,
+             cmp = cmp, tst = tst, i_paris = i_paris,      # <-- AJOUT : diagnostic bloc de Paris
              err_sp_pois = err_sp_pois, err_rd_pois = err_rd_pois,
              err_sp_hurd = err_sp_hurd, err_rd_hurd = err_rd_hurd,
+             mae_sp_pois = mae_sp_pois, mae_rd_pois = mae_rd_pois,   # <-- AJOUT : MAE
+             mae_sp_hurd = mae_sp_hurd, mae_rd_hurd = mae_rd_hurd,   # <-- AJOUT : MAE
              boot_diff = boot_diff, boot_moran = boot_moran,
              mc_raw = list(pois = mc_pois_dgp, nb = mc_nb_dgp),
              PARAM = PARAM, beta_star = beta_star),

@@ -1,5 +1,5 @@
-"modele","decoupage","mse","n_folds_NA","ratio_vs_blocs"
-"Poisson (f_cv)","CV blocs spatiaux (k-means k=10)",1.81444388141118,0,1
-"Poisson (f_cv)","CV aléatoire (10%, 20 rép.)",9.53599349684612,0,5.25560123106675
-"Hurdle-Pois (f_cv)","CV blocs spatiaux (k-means k=10)",2.47896152850644,0,1
-"Hurdle-Pois (f_cv)","CV aléatoire (10%, 20 rép.)",1.85651517832991,0,0.748908426767094
+"modele","decoupage","mse","mae","n_folds_NA","ratio_vs_blocs","mse_naive_moy","skill_vs_naive"
+"Poisson (f_cv)","CV blocs spatiaux (k-means k=10)",1.81444388141118,0.86631629004843,0,1,11.2674901255423,0.838966454712216
+"Poisson (f_cv)","CV aléatoire (10%, 20 rép.)",9.53599349684612,0.92289744124402,0,5.25560123106675,17.5882995037359,0.45782174707563
+"Hurdle-Pois (f_cv)","CV blocs spatiaux (k-means k=10)",2.47896152850644,0.873585096628037,0,1,11.2674901255423,0.77998990894282
+"Hurdle-Pois (f_cv)","CV aléatoire (10%, 20 rép.)",1.85651517832991,0.826922734374636,0,0.748908426767094,17.5882995037359,0.894446010659782
