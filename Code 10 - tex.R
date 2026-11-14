@@ -363,31 +363,67 @@ if (!is.null(c7)) {
                           ". Sous DGP NB2, le Poisson sous-estime ses SE (couv. < 95\\%) : d'où les SE clusterisées."))
   })
   
-  section("TABLEAU 14 - Spatial : Moran I, SAR, CV", {
+  section("TABLEAU 14 - Spatial : Moran I, SAR, CV (2 poids)", {
+    # --- repli sur le checkpoint 4_spatial si code7.rds n'a pas encore les champs IDW ---
+    ck4 <- tryCatch(readRDS(file.path(DOSSIER_OUT, "code7_4_spatial.rds")), error = function(e) NULL)
+    moran_idw   <- if (!is.null(c7$moran_idw))   c7$moran_idw   else if (!is.null(ck4$moran_idw))   ck4$moran_idw   else NULL
+    m_sar_idw   <- if (!is.null(c7$m_sar_idw))   c7$m_sar_idw   else if (!is.null(ck4$m_sar_idw))   ck4$m_sar_idw   else NULL
+    sar_rho_idw <- if (!is.null(c7$sar_rho_idw)) c7$sar_rho_idw else if (!is.null(ck4$sar_rho_idw)) ck4$sar_rho_idw else NULL
+    has_idw <- !is.null(moran_idw)
+    
+    # extraction robuste de rho (grep, comme dans le Code 6 révisé) + p depuis sar_rho si dispo
+    get_rho <- function(m_sar, sar_rho) {
+      if (!is.null(sar_rho) && all(c("rho", "p") %in% names(sar_rho)))
+        return(c(rho = unname(sar_rho["rho"]), p = unname(sar_rho["p"])))
+      if (is.null(m_sar)) return(c(rho = NA_real_, p = NA_real_))
+      cf <- coef(m_sar)
+      i <- grep("^rho$", names(cf)); if (!length(i)) i <- grep("rho", names(cf))
+      if (!length(i)) return(c(rho = NA_real_, p = NA_real_))
+      rho_v <- unname(cf[i[1]])
+      V <- tryCatch(vcov(m_sar), error = function(e) NULL)
+      se <- NA_real_
+      if (!is.null(V)) {
+        j <- grep("^rho$", rownames(V)); if (!length(j)) j <- grep("rho", rownames(V))
+        if (length(j)) se <- sqrt(V[j[1], j[1]])
+      }
+      p <- if (is.finite(se) && se > 0) 2 * pnorm(-abs(rho_v / se)) else NA_real_
+      c(rho = rho_v, p = p)
+    }
+    r_knn <- get_rho(c7$m_sar, c7$sar_rho)
+    r_idw <- if (has_idw) get_rho(m_sar_idw, sar_rho_idw) else c(rho = NA_real_, p = NA_real_)
+    
     mor <- data.frame(
-      Indicateur = c("Moran I des résidus de M4 (8-NN, poids W)",
+      Indicateur = c("Moran $I$ des résidus de M4", "Moran $I$ des résidus de M4",
+                     "$\\rho$ SAR (lagsarlm)", "$\\rho$ SAR (lagsarlm)",
                      "MSE CV par blocs spatiaux (k-means, k = 10)",
                      "MSE CV aléatoire (10\\%, 20 répétitions)"),
-      Valeur = c(f4(c7$moran$estimate[1]), f3(c7$tab_cv$mse[1]), f3(c7$tab_cv$mse[2])),
-      p = c(fmtp(c7$moran$p.value), "--", "--"), stringsAsFactors = FALSE)
-    rho_txt <- ""
-    if (!is.null(c7$m_sar) && "rho" %in% names(coef(c7$m_sar))) {
-      rho_v <- unname(coef(c7$m_sar)["rho"])
-      pv <- if (!is.null(c7$sar_rho)) fmtp(c7$sar_rho["p"]) else {
-        V <- tryCatch(vcov(c7$m_sar), error = function(e) NULL)
-        se <- if (!is.null(V) && "rho" %in% rownames(V)) sqrt(V["rho", "rho"]) else NA_real_
-        if (!is.na(se) && se > 0) fmtp(2 * pnorm(-abs(rho_v / se))) else "--" }
-      mor <- rbind(mor, data.frame(Indicateur = "$\\rho$ du modèle SAR (lagsarlm, 8-NN)",
-                                   Valeur = f4(rho_v), p = pv, stringsAsFactors = FALSE))
-      rho_txt <- paste0(" ; SAR rho = ", f4(rho_v))
-    }
-    # PATCH v3 : ratio neutre au lieu du pourcentage faux
+      Poids = c("8-NN, W", if (has_idw) "1/d, $\\leq$ 200 km, W" else "--",
+                "8-NN, W", if (has_idw) "1/d, $\\leq$ 200 km, W" else "--",
+                "--", "--"),
+      Valeur = c(f4(c7$moran$estimate[1]),
+                 if (has_idw) f4(moran_idw$estimate[1]) else "--",
+                 f4(r_knn["rho"]),
+                 if (has_idw) f4(r_idw["rho"]) else "--",
+                 f3(c7$tab_cv$mse[1]), f3(c7$tab_cv$mse[2])),
+      p = c(fmtp(c7$moran$p.value),
+            if (has_idw) fmtp(moran_idw$p.value) else "--",
+            fmtp(r_knn["p"]),
+            if (has_idw) fmtp(r_idw["p"]) else "--",
+            "--", "--"),
+      stringsAsFactors = FALSE)
+    
     ratio_cv <- c7$tab_cv$mse[2] / c7$tab_cv$mse[1]     # aléatoire / blocs spatiaux
-    note14 <- paste0("Moran I des résidus significatif", rho_txt, ". ",
-                     "MSE CV aléatoire / MSE CV par blocs spatiaux = ", f2(ratio_cv),
-                     " : la CV aléatoire est dominée par l'outlier Paris (y = 103) quand il tombe dans l'échantillon de test ; ",
-                     "la CV par blocs spatiaux (k-means, k = 10) reste la référence (pas de fuite spatiale).")
-    tex_tab(mor, c("Indicateur", "Valeur", "p"), "lrr",
-            "Autocorrélation spatiale des résidus et validation croisée", "tab:spatial", note = note14)
-  })
-} else cat("\n!! code7.rds illisible : relance le Code 7 v2 patché pour les tableaux 11-14.\n")
+    note14 <- paste0(
+      "Moran $I$ des résidus significatif sous les deux poids (8-NN : $I$ = ", f4(c7$moran$estimate[1]),
+      ", p = ", sprintf("%.1e", c7$moran$p.value),
+      if (has_idw) paste0(" ; 1/d $\\leq$ 200 km : $I$ = ", f4(moran_idw$estimate[1]),
+                          ", p = ", sprintf("%.1e", moran_idw$p.value)) else "",
+      ") : autocorrélation résiduelle positive, d'où SE clusterisées et CV par blocs. ",
+      "SAR $\\rho$ : 8-NN $\\rho$ = ", f4(r_knn["rho"]), " (p = ", fmtp(r_knn["p"]), "), ",
+      if (has_idw) paste0("1/d $\\leq$ 200 km $\\rho$ = ", f4(r_idw["rho"]), " (p = ", fmtp(r_idw["p"]), "), ") else "",
+      "la dépendance spatiale de $y$ est absorbée par les FE régionales en 8-NN ; sous 1/d dense, $\\rho$ négatif = ajustement intra-régional (ne pas interpréter causalement). ",
+      "MSE CV aléatoire / MSE CV blocs spatiaux = ", f2(ratio_cv),
+      " : la CV aléatoire est dominée par l'outlier Paris (y = 103) ; la CV par blocs spatiaux reste la référence (pas de fuite spatiale).")
+    tex_tab(mor, c("Indicateur", "Poids $w_{ij}$", "Valeur", "p"), "llrr",
+            "Autocorrélation spatiale des résidus, SAR et validation croisée (2 poids)", "tab:spatial", note = note14)
+  })}

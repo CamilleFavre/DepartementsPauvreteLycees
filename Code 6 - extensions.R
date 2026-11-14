@@ -222,167 +222,151 @@ CK("3_mc", list(tab_mc = tab_mc, pois = mc_pois_dgp, nb = mc_nb_dgp, beta_star =
 cat("Checkpoint 3 OK\n")
 
 # ---------------------------------------------------------------------
-# 4. SPATIAL COMMUNAL : Moran I des résidus, SAR (tryCatch), CV par blocs
+# 4. SPATIAL COMMUNAL : Moran + SAR sous 2 poids (8-NN, 1/d 200km) ;
+#    Moran des résidus Poisson ET Hurdle ; CV blocs vs aléatoire sous Poisson ET Hurdle
 # ---------------------------------------------------------------------
+# library(pscl) en haut du script (hurdle)
+
 d_sp   <- d_mod[complete.cases(d_mod[, c("x_pop", "y_pop")]), ]
-coords <- as.matrix(d_sp[, c("x_pop", "y_pop")])
+coords <- as.matrix(d_sp[, c("x_pop", "y_pop")])          # L93, mètres
+
+# --- poids principal : 8-NN, row-standardisé ---
 nb8 <- knn2nb(knearneigh(coords, k = 8))
 lw  <- nb2listw(nb8, style = "W")
-m_p_sp <- glm(formules$M4, family = poisson, data = d_sp)
-mt <- lm.morantest(m_p_sp, lw)
-cat(sprintf("Moran I residus M4 : I = %.4f, p = %.4g\n", mt$estimate[1], mt$p.value))
 
-m_sar <- tryCatch(
-  if (requireNamespace("spatialreg", quietly = TRUE))
-    spatialreg::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE)
-  else spdep::lagsarlm(formules$M4, data = d_sp, listw = lw, method = "eigen", quiet = TRUE),
-  error = function(e) { message("SAR non estimé : ", e$message); NULL })
-sar_rho <- NULL
-if (!is.null(m_sar) && "rho" %in% names(coef(m_sar))) {
-  rho_v  <- unname(coef(m_sar)["rho"])
-  V_sar  <- tryCatch(vcov(m_sar), error = function(e) NULL)
-  se_rho <- if (!is.null(V_sar) && "rho" %in% rownames(V_sar)) sqrt(V_sar["rho", "rho"]) else NA_real_
-  p_rho  <- if (!is.na(se_rho) && se_rho > 0) 2 * pnorm(-abs(rho_v / se_rho)) else NA_real_
-  sar_rho <- c(rho = rho_v, se = se_rho, p = p_rho)
-  cat(sprintf("SAR rho = %.4f | SE = %.4f | p = %.4g\n", rho_v, se_rho, p_rho))
+# --- poids robustesse : 1/d_ij tronqué à 200 km, row-standardisé ---
+CUTOFF_IDW <- 200
+if (all(c("lon", "lat") %in% names(d_sp))) {
+  D_km <- tryCatch(geosphere::distm(cbind(d_sp$lon, d_sp$lat), fun = geosphere::distHaversine) / 1000,
+                   error = function(e) as.matrix(dist(coords)) / 1000)
+} else {
+  D_km <- as.matrix(dist(coords)) / 1000
+}
+W_idw <- 1 / (D_km + 1e-6); W_idw[D_km > CUTOFF_IDW] <- 0; diag(W_idw) <- 0
+dimnames(W_idw) <- list(d_sp$code_insee, d_sp$code_insee)
+lw_idw <- mat2listw(W_idw, style = "W")
+
+# --- 2 modèles "full" (avec FE) : Poisson M4 et Hurdle M4 ---
+m_p_sp <- glm(formules$M4, family = poisson, data = d_sp)
+m_h_sp <- tryCatch(hurdle(formules$M4, data = d_sp, dist = "poisson", zero.dist = "poisson"),
+                   error = function(e) NULL)
+
+# --- pipeline Moran + SAR sous une matrice de poids (Poisson M4) ---
+run_moran_sar <- function(lw_x, tag) {
+  mt <- lm.morantest(m_p_sp, lw_x)
+  cat(sprintf("[%s] Moran I residus M4 (Poisson) : I = %.4f, p = %.4g\n", tag, mt$estimate[1], mt$p.value))
+  m_sar <- tryCatch(
+    if (requireNamespace("spatialreg", quietly = TRUE))
+      spatialreg::lagsarlm(formules$M4, data = d_sp, listw = lw_x, method = "eigen", quiet = TRUE)
+    else spdep::lagsarlm(formules$M4, data = d_sp, listw = lw_x, method = "eigen", quiet = TRUE),
+    error = function(e) { message("SAR non estimé (", tag, ") : ", e$message); NULL })
+  rho_v <- se_rho <- p_rho <- NA_real_
+  if (!is.null(m_sar)) {
+    cf <- coef(m_sar)
+    i  <- grep("^rho$", names(cf)); if (!length(i)) i <- grep("rho", names(cf))
+    if (length(i)) rho_v <- unname(cf[i[1]])
+    V_sar <- tryCatch(vcov(m_sar), error = function(e) NULL)
+    if (!is.null(V_sar)) {
+      j <- grep("^rho$", rownames(V_sar)); if (!length(j)) j <- grep("rho", rownames(V_sar))
+      if (length(j)) {
+        se_rho <- sqrt(V_sar[j[1], j[1]])
+        p_rho  <- if (is.finite(se_rho) && se_rho > 0) 2 * pnorm(-abs(rho_v / se_rho)) else NA_real_
+      }
+    }
+  }
+  cat(sprintf("[%s] SAR rho = %.4f | SE = %.4f | p = %.4g\n", tag, rho_v, se_rho, p_rho))
+  list(moran = mt, m_sar = m_sar, sar_rho = c(rho = rho_v, se = se_rho, p = p_rho))
 }
 
-f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")  # inclut z_moran
+res_knn <- run_moran_sar(lw,     "8-NN")
+res_idw <- run_moran_sar(lw_idw, "1/d trq 200km")
+
+# alias (principal = 8-NN) + versions IDW
+mt <- res_knn$moran; m_sar <- res_knn$m_sar; sar_rho <- res_knn$sar_rho
+moran_idw <- res_idw$moran; m_sar_idw <- res_idw$m_sar; sar_rho_idw <- res_idw$sar_rho
+
+# --- Moran des résidus du HURDLE sous les 2 poids (moran.test car hurdle n'est pas un lm) ---
+if (!is.null(m_h_sp)) {
+  e_h <- residuals(m_h_sp, type = "response")             # y - E[y]
+  moran_h_knn <- moran.test(e_h, lw)
+  moran_h_idw <- moran.test(e_h, lw_idw)
+  cat(sprintf("[hurdle 8-NN] I = %.4f, p = %.4g | [hurdle 1/d 200km] I = %.4f, p = %.4g\n",
+              moran_h_knn$estimate[1], moran_h_knn$p.value,
+              moran_h_idw$estimate[1], moran_h_idw$p.value))
+} else { moran_h_knn <- moran_h_idw <- NULL }
+
+# --- CV : 2 modèles (Poisson / Hurdle) x 2 découpages (blocs k=10 / aléatoire 10% x 20) ---
+f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")  # M4 sans FE
 set.seed(1)
 bloc <- kmeans(scale(coords), centers = 10)$cluster
-err_sp <- sapply(sort(unique(bloc)), function(b) {
-  te <- bloc == b
-  m  <- glm(f_cv, family = poisson, data = d_sp[!te, ])
-  mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)
-})
-err_rd <- sapply(1:20, function(r) {
+
+fit_pois <- function(train) glm(f_cv, family = poisson, data = train)
+fit_hurd <- function(train) tryCatch(hurdle(f_cv, data = train, dist = "poisson", zero.dist = "poisson"),
+                                     error = function(e) NULL)
+mse_fold <- function(fitfun, te) {                          # te = logique (test)
+  m <- fitfun(d_sp[!te, ])
+  if (is.null(m)) return(NA_real_)                         # fold non convergé (hurdle)
+  mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)  # hurdle: predict response = E[y]
+}
+
+blocks_te <- lapply(sort(unique(bloc)), function(b) bloc == b)      # 10 folds spatiaux
+rand_te   <- lapply(1:20, function(r) {                              # 20 folds aléatoires 10 %
   set.seed(r)
-  te <- sample(nrow(d_sp), round(0.10 * nrow(d_sp)))
-  m  <- glm(f_cv, family = poisson, data = d_sp[-te, ])
-  mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)
+  te <- logical(nrow(d_sp)); te[sample(nrow(d_sp), round(0.10 * nrow(d_sp)))] <- TRUE
+  te
 })
-tab_cv <- data.frame(methode = c("CV blocs spatiaux (k-means k=10)", "CV aléatoire (10%, 20 rép.)"),
-                     mse = c(mean(err_sp), mean(err_rd)))
+paris_rd <- sapply(rand_te, function(te) any(d_sp$y[te] == max(d_sp$y)))
+
+err_sp_pois <- sapply(blocks_te, mse_fold, fitfun = fit_pois)
+err_rd_pois <- sapply(rand_te,   mse_fold, fitfun = fit_pois)
+err_sp_hurd <- sapply(blocks_te, mse_fold, fitfun = fit_hurd)
+err_rd_hurd <- sapply(rand_te,   mse_fold, fitfun = fit_hurd)
+
+mse_bloc_pois <- mean(err_sp_pois, na.rm = TRUE)
+mse_bloc_hurd <- mean(err_sp_hurd, na.rm = TRUE)
+tab_cv <- data.frame(
+  modele    = rep(c("Poisson (f_cv)", "Hurdle-Pois (f_cv)"), each = 2),
+  decoupage = rep(c("CV blocs spatiaux (k-means k=10)", "CV aléatoire (10%, 20 rép.)"), 2),
+  mse       = c(mse_bloc_pois, mean(err_rd_pois, na.rm = TRUE),
+                mse_bloc_hurd, mean(err_rd_hurd, na.rm = TRUE)),
+  n_folds_NA = c(sum(is.na(err_sp_pois)), sum(is.na(err_rd_pois)),
+                 sum(is.na(err_sp_hurd)), sum(is.na(err_rd_hurd))))
+tab_cv$ratio_vs_blocs <- tab_cv$mse / rep(c(mse_bloc_pois, mse_bloc_hurd), each = 2)
 print(tab_cv)
 write.csv(tab_cv, file.path(DOSSIER_OUT, "tab_cv.csv"), row.names = FALSE)
-p_cv <- ggplot(tab_cv, aes(methode, mse, fill = methode)) +
-  geom_col(width = 0.5) + geom_text(aes(label = round(mse, 3)), vjust = -0.5) +
-  theme_minimal(base_size = 11) + theme(legend.position = "none") +
-  labs(x = NULL, y = "MSE", title = "CV spatial vs aléatoire : le CV aléatoire sous-estime l'erreur")
-ggsave(file.path(DOSSIER_OUT, "fig_cv_communes.png"), p_cv, width = 7, height = 5, dpi = 150)
-CK("4_spatial", list(tab_cv = tab_cv, moran = mt, m_sar = m_sar, bloc = bloc))
+
+p_cv <- ggplot(tab_cv, aes(decoupage, mse, fill = decoupage)) +
+  geom_col(width = 0.6) + geom_text(aes(label = sprintf("%.3f", mse)), vjust = -0.4) +
+  facet_wrap(~ modele) + theme_minimal() + theme(legend.position = "none") +
+  labs(x = NULL, y = "MSE",
+       title = "CV par blocs spatiaux vs aléatoire, sous Poisson et sous Hurdle",
+       subtitle = "La CV aléatoire est dominée par Paris (y = 103) dans le test + fuite spatiale ; la CV par blocs est la référence")
+ggsave(file.path(DOSSIER_OUT, "fig_cv_communes.png"), p_cv, width = 9, height = 5, dpi = 150)
+
+CK("4_spatial", list(tab_cv = tab_cv, bloc = bloc, paris_rd = paris_rd,
+                     err_sp_pois = err_sp_pois, err_rd_pois = err_rd_pois,
+                     err_sp_hurd = err_sp_hurd, err_rd_hurd = err_rd_hurd,
+                     moran = mt, m_sar = m_sar, sar_rho = sar_rho,
+                     moran_idw = moran_idw, m_sar_idw = m_sar_idw, sar_rho_idw = sar_rho_idw, lw_idw = lw_idw,
+                     moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw, m_h_sp = m_h_sp))
 cat("Checkpoint 4 OK\n")
 
-# ============ Van den Broek : versions cluster-robustes (spatial) ============
-# (m_p = Poisson M4 ; adapte le nom si ton Code 7 l'appelle autrement)
-m_p <- modeles$Poisson                              # M4 avec FE (cohérent avec les tests CT)
-p0  <- dpois(0, fitted(m_p))
-n0  <- sum(d_mod$y == 0)
-z_vdb_iid <- (n0 - sum(p0)) / sqrt(sum(p0 * (1 - p0)))
-
-u_score <- ifelse(d_mod$y == 0, 1/p0 - 1, -1)
-vdB_z <- function(cl, n = length(u_score)) {
-  if (is.null(cl)) return(list(z = NA_real_, p = NA_real_, G = 0))
-  if (inherits(cl, "kmeans")) cl <- cl$cluster
-  cl <- as.character(cl)
-  if (length(cl) != n) return(list(z = NA_real_, p = NA_real_, G = length(cl)))
-  Ug <- tapply(u_score, cl, sum); G <- length(Ug)
-  if (G < 3) return(list(z = NA_real_, p = NA_real_, G = G))
-  z <- sum(u_score) / sqrt(G/(G-1) * sum(Ug^2))
-  list(z = z, p = 2 * pnorm(-abs(z)), G = G)
-}
-
-cl_acad  <- as.character(d_mod$region_acad)
-cl_dept  <- as.character(d_mod$dept)
-cl_block <- as.character(bloc)                      # ← le bon vecteur (length 925)
-
-vdB_rob <- list(
-  iid   = list(z = z_vdb_iid, p = 2*pnorm(-abs(z_vdb_iid)), G = nrow(d_mod)),
-  acad  = vdB_z(cl_acad),
-  dept  = vdB_z(cl_dept),
-  block = vdB_z(cl_block)
-)
-
-# wild cluster bootstrap (Rademacher) sur les 3 partitions
-wild_boot <- function(cl, B = 2000) {
-  Ug <- as.numeric(tapply(d_mod$y == 0, cl, sum) - tapply(p0, cl, sum))
-  G <- length(Ug); T_obs <- sum(Ug); V_cl <- G/(G-1) * sum(Ug^2)
-  set.seed(2026)
-  W  <- matrix(sample(c(-1, 1), G * B, replace = TRUE), nrow = G)
-  Tb <- as.numeric(t(W) %*% Ug)
-  list(z = T_obs/sqrt(V_cl), p_normal = 2*pnorm(-abs(T_obs/sqrt(V_cl))),
-       p_wild = mean(abs(Tb/sqrt(V_cl)) >= abs(T_obs/sqrt(V_cl))), B = B, G = G)   # ← list(), pas c()
-}
-
-vdB_rob$wild_acad  <- wild_boot(cl_acad)
-vdB_rob$wild_dept  <- wild_boot(cl_dept)
-vdB_rob$wild_block <- wild_boot(cl_block)
-
-print(vdB_rob)
-sapply(vdB_rob[c("iid","acad","dept","block")], function(x) round(c(x$z, x$p, x$G), 4))
-# >>> saveRDS(code7.rds) en ajoutant vdB_rob = vdB_rob
-# >>> AJOUTER dans le saveRDS de code7.rds :  vdB_rob = vdB_rob
-
-# ============ Vuong : versions cluster-robustes (spatial) ============
-# convention : m_i = ll_Poisson - ll_Hurdle  =>  V < 0 = Hurdle préféré
-h   <- modeles$Hurdle_Pois
-m_p <- modeles$Poisson          # déjà défini plus haut, sécurité :
-if (!exists("m_p")) m_p <- modeles$Poisson
-n   <- nrow(d_mod)
-
-# log-vraisemblances par observation (termes clampés ; troncature -log(1-f_c(0)) incluse)
-mu_p <- fitted(m_p)
-mu_h <- pmax(predict(h, type = "count"), 1e-10)
-pi_h <- pmin(pmax(predict(h, type = "zero"), 1e-10), 1 - 1e-10)
-ll_p <- dpois(d_mod$y, mu_p, log = TRUE)
-ll_h <- ifelse(d_mod$y == 0, log(pi_h),
-               log(1 - pi_h) + dpois(d_mod$y, mu_h, log = TRUE) - log(1 - dpois(0, mu_h)))
-m_i   <- ll_h - ll_p
-V_iid <- sum(m_i) / (sqrt(n) * sd(m_i))
-p_iid <- 2 * pnorm(-abs(V_iid))
-
-vuong_z <- function(cl, n = length(m_i)) {
-  if (is.null(cl)) return(list(V = NA_real_, p = NA_real_, G = 0))
-  if (inherits(cl, "kmeans")) cl <- cl$cluster
-  cl <- as.character(cl)
-  if (length(cl) != n) return(list(V = NA_real_, p = NA_real_, G = length(cl)))
-  mg <- tapply(m_i, cl, sum); G <- length(mg)
-  if (G < 3) return(list(V = NA_real_, p = NA_real_, G = G))
-  V <- sum(m_i) / sqrt(G/(G-1) * sum(mg^2))          # variance cluster de sum(m_i)
-  list(V = V, p = 2 * pnorm(-abs(V)), G = G)
-}
-
-vuong_rob <- list(
-  iid   = list(V = V_iid, p = p_iid, G = n),
-  acad  = vuong_z(cl_acad),
-  dept  = vuong_z(cl_dept),
-  block = vuong_z(cl_block)
-)
-
-# wild cluster bootstrap (Rademacher, B = 2000) sur les 3 partitions
-wild_boot_v <- function(cl, B = 2000) {
-  mg <- as.numeric(tapply(m_i, cl, sum))
-  G <- length(mg); T_obs <- sum(mg); V_cl <- G/(G-1) * sum(mg^2)
-  set.seed(2026)
-  W  <- matrix(sample(c(-1, 1), G * B, replace = TRUE), nrow = G)
-  Vb <- as.numeric(t(W) %*% mg) / sqrt(V_cl)
-  list(V = T_obs/sqrt(V_cl), p_normal = 2*pnorm(-abs(T_obs/sqrt(V_cl))),
-       p_wild = mean(abs(Vb) >= abs(T_obs/sqrt(V_cl))), B = B, G = G)   # list(), pas c()
-}
-vuong_rob$wild_acad  <- wild_boot_v(cl_acad)
-vuong_rob$wild_dept  <- wild_boot_v(cl_dept)
-vuong_rob$wild_block <- wild_boot_v(cl_block)
-
-print(vuong_rob)
-# >>> saveRDS(code7.rds) : ajouter  vuong_rob = vuong_rob
+# ============ Van den Broek / Vuong cluster-robustes : INCHANGÉS (ils utilisent déjà `bloc`) ============
+# ... (reprendre tels quels les blocs vdB_rob / vuong_rob de ta version) ...
 
 # ---------------------------------------------------------------------
-# 5. SAUVEGARDE FINALE
+# 5. SAUVEGARDE FINALE (étendue : tous les champs spatiaux, y compris IDW et hurdle)
 # ---------------------------------------------------------------------
-saveRDS(list(tab_spec = tab_spec, tab_boot = tab_boot, tab_mc = tab_mc, tab_cv = tab_cv, vuong_rob = vuong_rob,
-             moran = mt, m_sar = m_sar, sar_rho = sar_rho, boot_diff = boot_diff, boot_moran = boot_moran, vdB_rob = vdB_rob,
+saveRDS(list(tab_spec = tab_spec, tab_boot = tab_boot, tab_mc = tab_mc, tab_cv = tab_cv,
+             vuong_rob = vuong_rob, vdB_rob = vdB_rob,
+             moran = mt, m_sar = m_sar, sar_rho = sar_rho,
+             moran_idw = moran_idw, m_sar_idw = m_sar_idw, sar_rho_idw = sar_rho_idw, lw_idw = lw_idw,
+             moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw,
+             bloc = bloc, paris_rd = paris_rd,
+             err_sp_pois = err_sp_pois, err_rd_pois = err_rd_pois,
+             err_sp_hurd = err_sp_hurd, err_rd_hurd = err_rd_hurd,
+             boot_diff = boot_diff, boot_moran = boot_moran,
              mc_raw = list(pois = mc_pois_dgp, nb = mc_nb_dgp),
              PARAM = PARAM, beta_star = beta_star),
         file.path(DOSSIER_OUT, "code7.rds"))
-cat("Code 7 v2 terminé : code7.rds + tab_spec/tab_boot/tab_mc/tab_cv.csv + 3 figs + checkpoints\n")
-
+cat("Code 7 v2 terminé\n")

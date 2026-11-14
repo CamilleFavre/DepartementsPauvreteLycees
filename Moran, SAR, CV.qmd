@@ -1,0 +1,238 @@
+---
+title: "Diagnostics spatiaux inter-villes : cartes, I de Moran, SAR, CV par blocs"
+format:
+  html:
+    toc: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+Ce document produit les visuels des diagnostics spatiaux (N = 925 villes) :
+carte des blocs de la CV spatiale, carte des résidus de M4, démonstration de la fuite
+spatiale, nuages de Moran sous les deux poids $w_{ij}$ (8-NN et 1/d ≤ 200 km),
+et comparaison des MSE de CV par blocs vs aléatoire.
+
+```{r setup}
+library(arrow); library(dplyr); library(spdep); library(ggplot2); library(sf); library(knitr)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+set.seed(2026)
+
+os_name <- Sys.info()[["sysname"]]
+if (os_name == "Windows") {
+  DOSSIER_OUT <- "C:/Users/camil/Documents/DepartementsPauvreteLycees"
+} else if (os_name == "Darwin") {
+  DOSSIER_OUT <- "/Users/camillefavre/DepartementsPauvreteLycees"
+} else {
+  stop("OS non pris en charge.")
+}
+DOSSIER_ECO <- file.path(DOSSIER_OUT, "data_eco")
+
+charg <- readRDS(file.path(DOSSIER_OUT, "modeles_comptage.rds"))
+c7    <- tryCatch(readRDS(file.path(DOSSIER_OUT, "code7.rds")), error = function(e) NULL)
+d_mod <- charg$d_mod; modeles <- charg$modeles; formules <- charg$formules
+cat("N =", nrow(d_mod), "\n")
+```
+
+```{r data}
+# centroïdes pondérés par la population (identique au Code 6)
+map_plm <- function(code) dplyr::case_when(
+  grepl("^751(0[1-9]|1[0-9]|20)$", code) ~ "75056",
+  grepl("^6938[1-9]$", code) ~ "69123",
+  grepl("^132(0[1-9]|1[0-6])$", code) ~ "13055",
+  TRUE ~ code)
+
+files_eco <- list.files(DOSSIER_ECO, pattern = "eco_dept_.*[.]parquet$", full.names = TRUE)
+centroides <- bind_rows(lapply(files_eco, function(f) {
+  read_parquet(f, col_select = c("lcog_geo", "x_l93", "y_l93", "ind")) %>%
+    mutate(code_insee = map_plm(substr(as.character(lcog_geo), 1, 5))) %>%
+    filter(code_insee %in% d_mod$code_insee, is.finite(ind), ind > 0) %>%
+    group_by(code_insee) %>%
+    summarise(x_pop = weighted.mean(x_l93 + 100, ind),
+              y_pop = weighted.mean(y_l93 + 100, ind), .groups = "drop")
+}))
+d_mod <- d_mod %>% left_join(centroides, by = "code_insee")
+
+d_sp   <- d_mod[complete.cases(d_mod[, c("x_pop", "y_pop")]), ]
+coords <- as.matrix(d_sp[, c("x_pop", "y_pop")])          # L93, mètres
+cat("N spatial =", nrow(d_sp), "\n")
+
+# poids 1 : 8-NN, row-standardisé
+nb8 <- knn2nb(knearneigh(coords, k = 8))
+lw  <- nb2listw(nb8, style = "W")
+
+# poids 2 (robustesse) : 1/d_ij tronqué à 200 km, row-standardisé
+CUTOFF_IDW <- 200
+if (all(c("lon", "lat") %in% names(d_sp)) && requireNamespace("geosphere", quietly = TRUE)) {
+  D_km <- geosphere::distm(cbind(d_sp$lon, d_sp$lat), fun = geosphere::distHaversine) / 1000
+} else {
+  D_km <- as.matrix(dist(coords)) / 1000
+}
+W_idw <- 1 / (D_km + 1e-6); W_idw[D_km > CUTOFF_IDW] <- 0; diag(W_idw) <- 0
+dimnames(W_idw) <- list(d_sp$code_insee, d_sp$code_insee)
+lw_idw <- mat2listw(W_idw, style = "W")
+
+# modèle M4 + blocs k-means k=10 (seed 1, comme Code 6) + résidus
+m_p_sp <- glm(formules$M4, family = poisson, data = d_sp)
+set.seed(1)
+bloc <- kmeans(scale(coords), centers = 10)$cluster
+e <- residuals(m_p_sp, type = "response")                 # y - mu
+df_map <- d_sp %>% mutate(bloc = factor(bloc), resid = e)
+pts <- st_as_sf(df_map, coords = c("x_pop", "y_pop"), crs = 2154)
+```
+
+```{r tests}
+# I de Moran des résidus sous les 2 poids
+mt_knn <- lm.morantest(m_p_sp, lw)
+mt_idw <- lm.morantest(m_p_sp, lw_idw)
+cat(sprintf("8-NN : I = %.4f, p = %.3g | 1/d 200km : I = %.4f, p = %.3g\n",
+            mt_knn$estimate[1], mt_knn$p.value, mt_idw$estimate[1], mt_idw$p.value))
+
+# CV : blocs spatiaux vs aléatoire (même code que Code 6, seed identique)
+f_cv <- reformulate(setdiff(all.vars(formules$M4), c("y", "region_acad")), response = "y")
+err_sp <- sapply(sort(unique(bloc)), function(b) {
+  te <- bloc == b
+  m  <- glm(f_cv, family = poisson, data = d_sp[!te, ])
+  mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)
+})
+err_rd <- numeric(20); paris_rd <- logical(20)
+for (r in 1:20) {
+  set.seed(r)
+  te <- sample(nrow(d_sp), round(0.10 * nrow(d_sp)))
+  m  <- glm(f_cv, family = poisson, data = d_sp[-te, ])
+  err_rd[r] <- mean((d_sp$y[te] - predict(m, d_sp[te, ], type = "response"))^2)
+  paris_rd[r] <- any(d_sp$y[te] == max(d_sp$y))
+}
+mse_sp <- mean(err_sp); mse_rd <- mean(err_rd)
+cat(sprintf("MSE blocs = %.3f | MSE aléatoire = %.3f | ratio = %.2f\n",
+            mse_sp, mse_rd, mse_rd / mse_sp))
+```
+
+```{r france}
+# contour de la France métropolitaine (si internet dispo, sinon on trace juste les points)
+fr <- tryCatch(
+  st_read("https://geo.api.gouv.fr/regions?fields=nom&format=geojson&geometry=contour",
+          quiet = TRUE) %>% st_transform(2154),
+  error = function(e) NULL)
+```
+
+## Carte des 10 blocs spatiaux de la CV
+
+```{r fig-blocks, fig.width=8, fig.height=8}
+ggplot(pts) +
+  { if (!is.null(fr)) geom_sf(data = fr, inherit.aes = FALSE, fill = NA, color = "grey70", linewidth = 0.2) } +
+  geom_sf(aes(color = bloc), size = 1.3) +
+  coord_sf() + theme_minimal() +
+  labs(title = "Les 10 blocs spatiaux de la CV (k-means sur les centroïdes, k = 10)",
+       subtitle = "Chaque bloc sert à son tour de fold de test : aucune ville voisine du test n'a servi à l'entraîner",
+       color = "Bloc", x = NULL, y = NULL)
+```
+
+## Carte des résidus de M4 (y − μ̂)
+
+```{r fig-resid, fig.width=8, fig.height=8}
+ggplot(pts) +
+  { if (!is.null(fr)) geom_sf(data = fr, inherit.aes = FALSE, fill = NA, color = "grey75", linewidth = 0.2) } +
+  geom_sf(aes(color = resid), size = 1.2) +
+  scale_color_gradient2(midpoint = 0, low = "blue", mid = "white", high = "red") +
+  coord_sf() + theme_minimal() +
+  labs(title = "Résidus de M4 : les villes voisines ont des résidus de même signe (taches rouges/bleues)",
+       subtitle = paste0("I de Moran = ", sprintf("%.4f", mt_knn$estimate[1]),
+                         ", p = ", format(mt_knn$p.value, digits = 2),
+                         " (8-NN) : autocorrélation spatiale résiduelle positive"),
+       color = "résidu", x = NULL, y = NULL)
+```
+
+## Fuite spatiale : fold aléatoire vs bloc spatial
+
+```{r fig-leakage, fig.width=10, fig.height=5}
+i_paris <- which.max(d_sp$y)
+set.seed(1); te_rd <- sample(nrow(d_sp), round(0.10 * nrow(d_sp)))   # un fold aléatoire de 10 %
+te_bl <- which(bloc == bloc[i_paris])                                # le bloc contenant Paris
+leak <- bind_rows(
+  df_map %>% mutate(scenario = "CV aléatoire : fold de test au hasard",
+                    test = seq_len(nrow(df_map)) %in% te_rd),
+  df_map %>% mutate(scenario = "CV par blocs : le bloc de Paris en test",
+                    test = seq_len(nrow(df_map)) %in% te_bl))
+ggplot(st_as_sf(leak, coords = c("x_pop", "y_pop"), crs = 2154)) +
+  { if (!is.null(fr)) geom_sf(data = fr, inherit.aes = FALSE, fill = NA, color = "grey80", linewidth = 0.15) } +
+  geom_sf(aes(color = test), size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey75", "TRUE" = "red")) +
+  facet_wrap(~scenario) + coord_sf() + theme_minimal() + theme(legend.position = "none") +
+  labs(title = "Fuite spatiale : à gauche, les villes de test (rouge) sont éparpillées parmi le train (gris) ;",
+       subtitle = "à droite, le test est un bloc entier → le modèle n'a vu aucune ville de ce voisinage",
+       x = NULL, y = NULL)
+```
+
+## Nuages de Moran des résidus (pente = I), sous les 2 poids
+
+```{r fig-moran, fig.width=10, fig.height=5}
+mk_scatter <- function(lw_x, tag) {
+  z  <- as.numeric(scale(e))
+  Wz <- as.numeric(lag.listw(lw_x, z, zero.policy = TRUE))
+  data.frame(z = z, Wz = Wz, poids = tag)
+}
+sc <- bind_rows(mk_scatter(lw, "8-NN, W"), mk_scatter(lw_idw, "1/d ≤ 200 km, W"))
+ggplot(sc, aes(z, Wz)) +
+  geom_point(alpha = 0.45, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  facet_wrap(~poids) + theme_minimal() +
+  labs(title = "Nuages de Moran des résidus de M4 : la pente rouge est le I",
+       subtitle = paste0("8-NN : I = ", sprintf("%.4f", mt_knn$estimate[1]), ", p = ", format(mt_knn$p.value, digits = 2),
+                         "  |  1/d ≤ 200 km : I = ", sprintf("%.4f", mt_idw$estimate[1]),
+                         ", p = ", format(mt_idw$p.value, digits = 2)),
+       x = "z (résidu standardisé)", y = "Wz (moyenne standardisée des voisins)")
+```
+
+## CV par blocs vs aléatoire
+
+```{r fig-cv, fig.width=10, fig.height=4.5}
+tab <- data.frame(methode = c("CV par blocs spatiaux (k = 10)", "CV aléatoire (10 %, 20 rép.)"),
+                  mse = c(mse_sp, mse_rd))
+p1 <- ggplot(tab, aes(methode, mse, fill = methode)) +
+  geom_col(width = 0.5) + geom_text(aes(label = sprintf("%.3f", mse)), vjust = -0.4) +
+  theme_minimal() + theme(legend.position = "none") +
+  labs(title = paste0("MSE de CV : ratio aléatoire / blocs = ", sprintf("%.2f", mse_rd / mse_sp)),
+       subtitle = "La CV aléatoire est dopée par Paris (y = 103) quand il tombe dans le test ; la CV par blocs est la référence (pas de fuite)",
+       y = "MSE", x = NULL)
+
+folds <- data.frame(mse = c(err_sp, err_rd),
+                    methode = rep(c("Blocs spatiaux (10 folds)", "Aléatoire (20 rép.)"), c(10, 20)),
+                    paris_dans_test = c(rep(FALSE, 10), paris_rd))
+p2 <- ggplot(folds, aes(methode, mse, fill = methode)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = paris_dans_test), width = 0.2, size = 2.2) +
+  scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red"),
+                     labels = c("non", "Paris (y = 103) dans le test")) +
+  theme_minimal() +
+  labs(title = "MSE par fold : les répétitions aléatoires contenant Paris explosent",
+       y = "MSE du fold", x = NULL, color = NULL)
+p1
+p2
+```
+
+## Tableau récapitulatif
+
+```{r tab}
+res <- data.frame(
+  Indicateur = c("Moran I des résidus M4 — 8-NN, W",
+                 "Moran I des résidus M4 — 1/d ≤ 200 km, W",
+                 "SAR ρ — 8-NN (code7.rds)",
+                 "SAR ρ — 1/d ≤ 200 km (code7.rds)",
+                 "MSE CV par blocs spatiaux (k = 10)",
+                 "MSE CV aléatoire (10 %, 20 rép.)",
+                 "Ratio MSE aléatoire / blocs"),
+  Valeur = c(sprintf("%.4f", mt_knn$estimate[1]),
+             sprintf("%.4f", mt_idw$estimate[1]),
+             if (!is.null(c7) && !is.null(c7$sar_rho))     sprintf("%.4f", c7$sar_rho["rho"])     else "--",
+             if (!is.null(c7) && !is.null(c7$sar_rho_idw)) sprintf("%.4f", c7$sar_rho_idw["rho"]) else "--",
+             sprintf("%.3f", mse_sp), sprintf("%.3f", mse_rd), sprintf("%.2f", mse_rd / mse_sp)),
+  p = c(format(mt_knn$p.value, digits = 2), format(mt_idw$p.value, digits = 2),
+        if (!is.null(c7) && !is.null(c7$sar_rho))     format(c7$sar_rho["p"], digits = 2)     else "--",
+        if (!is.null(c7) && !is.null(c7$sar_rho_idw)) format(c7$sar_rho_idw["p"], digits = 2) else "--",
+        "--", "--", "--"))
+kable(res, caption = "Diagnostics spatiaux inter-villes (N = 925) sous deux définitions de w_ij")
+```
