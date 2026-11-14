@@ -1,3 +1,5 @@
-"methode","mse"
-"CV blocs spatiaux (k-means k=10)",1.81444388141118
-"CV aléatoire (10%, 20 rép.)",9.53599349684612
+"modele","decoupage","mse","n_folds_NA","ratio_vs_blocs"
+"Poisson (f_cv)","CV blocs spatiaux (k-means k=10)",1.81444388141118,0,1
+"Poisson (f_cv)","CV aléatoire (10%, 20 rép.)",9.53599349684612,0,5.25560123106675
+"Hurdle-Pois (f_cv)","CV blocs spatiaux (k-means k=10)",2.47896152850644,0,1
+"Hurdle-Pois (f_cv)","CV aléatoire (10%, 20 rép.)",1.85651517832991,0,0.748908426767094
