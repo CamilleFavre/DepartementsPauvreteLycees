@@ -1,3 +1,3 @@
-"decoupage","naive_moyenne","naive_zero"
-"blocs k=10",11.2674901255423,13.4568809128656
-"aléatoire 10% x20",17.5882995037359,19.6239130434783
+"decoupage","naive_moyenne","naive_zero","naive_moyenne_pond","naive_zero_pond"
+"blocs k=10",11.2674901255423,13.4568809128656,18.4272530352137,20.5167567567568
+"aléatoire 10% x20",17.5882995037359,19.6239130434783,NA,NA

@@ -359,6 +359,25 @@ tab_cv <- data.frame(
 tab_cv$ratio_vs_blocs   <- tab_cv$mse / rep(c(mse_bloc_pois, mse_bloc_hurd), each = 2)
 tab_cv$mse_naive_moy    <- rep(naive_tab$naive_moyenne, 2)     # lignes 1,2 = blocs ; 3,4 = aléa
 tab_cv$skill_vs_naive   <- 1 - tab_cv$mse / tab_cv$mse_naive_moy
+# --- CV pondérée par le nombre de villes du fold (MSE poolée par ville) ---
+# taille_bloc alignée avec blocks_te (levels triés 1..10)
+taille_bloc <- as.integer(table(factor(bloc, levels = sort(unique(bloc)))))
+wtd <- function(err, w) weighted.mean(err, w, na.rm = TRUE)
+tab_cv$mse_ponderee <- c(wtd(err_sp_pois, taille_bloc), mean(err_rd_pois, na.rm = TRUE),
+                         wtd(err_sp_hurd, taille_bloc), mean(err_rd_hurd, na.rm = TRUE))
+tab_cv$mae_ponderee <- c(wtd(mae_sp_pois, taille_bloc), mean(mae_rd_pois, na.rm = TRUE),
+                         wtd(mae_sp_hurd, taille_bloc), mean(mae_rd_hurd, na.rm = TRUE))
+# NB : en CV aléatoire tous les folds ont la même taille (round(0.10*n) = 92 villes),
+#     donc la pondération y est sans effet (mse_ponderee = mse) ; c'est en blocs qu'elle compte.
+
+# baseline naïve pondérée (blocs) pour le skill pondéré
+naive_sp_moy  <- sapply(blocks_te, naive_fold, "mean")
+naive_sp_zero <- sapply(blocks_te, naive_fold, "zero")
+naive_tab$naive_moyenne_pond <- c(wtd(naive_sp_moy, taille_bloc), NA_real_)
+naive_tab$naive_zero_pond    <- c(wtd(naive_sp_zero, taille_bloc), NA_real_)
+tab_cv$skill_vs_naive_pond <- 1 - tab_cv$mse_ponderee /
+  rep(c(naive_tab$naive_moyenne_pond[1], naive_tab$naive_moyenne[2]), 2)
+
 print(tab_cv)
 write.csv(tab_cv, file.path(DOSSIER_OUT, "tab_cv.csv"), row.names = FALSE)
 write.csv(naive_tab, file.path(DOSSIER_OUT, "tab_cv_naive.csv"), row.names = FALSE)
@@ -408,11 +427,107 @@ CK("4_spatial", list(tab_cv = tab_cv, naive_tab = naive_tab, cmp = cmp,
                      moran_idw = moran_idw, m_sar_idw = m_sar_idw, sar_rho_idw = sar_rho_idw, lw_idw = lw_idw,
                      moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw, m_h_sp = m_h_sp))
 cat("Checkpoint 4 OK\n")
-# --- ensuite : blocs Van den Broek / Vuong inchangés, puis saveRDS final étendu
-#     (ajouter moran_idw, sar_rho_idw, lw_idw, moran_h_*, tab_cv, naive_tab, err_*, mae_*, bloc, ...)
 
-# ============ Van den Broek / Vuong cluster-robustes : INCHANGÉS (ils utilisent déjà `bloc`) ============
-# ... (reprendre tels quels les blocs vdB_rob / vuong_rob de ta version) ...
+# ============ Van den Broek : versions cluster-robustes (spatial) ============
+# (m_p = Poisson M4 ; adapte le nom si ton Code 7 l'appelle autrement)
+m_p <- modeles$Poisson                              # M4 avec FE (cohérent avec les tests CT)
+p0  <- dpois(0, fitted(m_p))
+n0  <- sum(d_mod$y == 0)
+z_vdb_iid <- (n0 - sum(p0)) / sqrt(sum(p0 * (1 - p0)))
+
+u_score <- ifelse(d_mod$y == 0, 1/p0 - 1, -1)
+vdB_z <- function(cl, n = length(u_score)) {
+  if (is.null(cl)) return(list(z = NA_real_, p = NA_real_, G = 0))
+  if (inherits(cl, "kmeans")) cl <- cl$cluster
+  cl <- as.character(cl)
+  if (length(cl) != n) return(list(z = NA_real_, p = NA_real_, G = length(cl)))
+  Ug <- tapply(u_score, cl, sum); G <- length(Ug)
+  if (G < 3) return(list(z = NA_real_, p = NA_real_, G = G))
+  z <- sum(u_score) / sqrt(G/(G-1) * sum(Ug^2))
+  list(z = z, p = 2 * pnorm(-abs(z)), G = G)
+}
+
+cl_acad  <- as.character(d_mod$region_acad)
+cl_dept  <- as.character(d_mod$dept)
+cl_block <- as.character(bloc)                      # ← le bon vecteur (length 925)
+
+vdB_rob <- list(
+  iid   = list(z = z_vdb_iid, p = 2*pnorm(-abs(z_vdb_iid)), G = nrow(d_mod)),
+  acad  = vdB_z(cl_acad),
+  dept  = vdB_z(cl_dept),
+  block = vdB_z(cl_block)
+)
+
+# wild cluster bootstrap (Rademacher) sur les 3 partitions
+wild_boot <- function(cl, B = 2000) {
+  Ug <- as.numeric(tapply(d_mod$y == 0, cl, sum) - tapply(p0, cl, sum))
+  G <- length(Ug); T_obs <- sum(Ug); V_cl <- G/(G-1) * sum(Ug^2)
+  set.seed(2026)
+  W  <- matrix(sample(c(-1, 1), G * B, replace = TRUE), nrow = G)
+  Tb <- as.numeric(t(W) %*% Ug)
+  list(z = T_obs/sqrt(V_cl), p_normal = 2*pnorm(-abs(T_obs/sqrt(V_cl))),
+       p_wild = mean(abs(Tb/sqrt(V_cl)) >= abs(T_obs/sqrt(V_cl))), B = B, G = G)   # ← list(), pas c()
+}
+
+vdB_rob$wild_acad  <- wild_boot(cl_acad)
+vdB_rob$wild_dept  <- wild_boot(cl_dept)
+vdB_rob$wild_block <- wild_boot(cl_block)
+
+print(vdB_rob)
+sapply(vdB_rob[c("iid","acad","dept","block")], function(x) round(c(x$z, x$p, x$G), 4))
+
+# ============ Vuong : versions cluster-robustes (spatial) ============
+# même convention que §1 : m_i = ll_Hurdle - ll_Poisson
+h   <- modeles$Hurdle_Pois
+m_p <- modeles$Poisson          # déjà défini plus haut, sécurité :
+if (!exists("m_p")) m_p <- modeles$Poisson
+n   <- nrow(d_mod)
+
+# log-vraisemblances par observation (termes clampés ; troncature -log(1-f_c(0)) incluse)
+mu_p <- fitted(m_p)
+mu_h <- pmax(predict(h, type = "count"), 1e-10)
+pi_h <- pmin(pmax(predict(h, type = "zero"), 1e-10), 1 - 1e-10)
+ll_p <- dpois(d_mod$y, mu_p, log = TRUE)
+ll_h <- ifelse(d_mod$y == 0, log(pi_h),
+               log(1 - pi_h) + dpois(d_mod$y, mu_h, log = TRUE) - log(1 - dpois(0, mu_h)))
+m_i   <- ll_h - ll_p
+V_iid <- sum(m_i) / (sqrt(n) * sd(m_i))
+p_iid <- 2 * pnorm(-abs(V_iid))
+
+vuong_z <- function(cl, n = length(m_i)) {
+  if (is.null(cl)) return(list(V = NA_real_, p = NA_real_, G = 0))
+  if (inherits(cl, "kmeans")) cl <- cl$cluster
+  cl <- as.character(cl)
+  if (length(cl) != n) return(list(V = NA_real_, p = NA_real_, G = length(cl)))
+  mg <- tapply(m_i, cl, sum); G <- length(mg)
+  if (G < 3) return(list(V = NA_real_, p = NA_real_, G = G))
+  V <- sum(m_i) / sqrt(G/(G-1) * sum(mg^2))          # variance cluster de sum(m_i)
+  list(V = V, p = 2 * pnorm(-abs(V)), G = G)
+}
+
+vuong_rob <- list(
+  iid   = list(V = V_iid, p = p_iid, G = n),
+  acad  = vuong_z(cl_acad),
+  dept  = vuong_z(cl_dept),
+  block = vuong_z(cl_block)
+)
+
+# wild cluster bootstrap (Rademacher, B = 2000) sur les 3 partitions
+wild_boot_v <- function(cl, B = 2000) {
+  mg <- as.numeric(tapply(m_i, cl, sum))
+  G <- length(mg); T_obs <- sum(mg); V_cl <- G/(G-1) * sum(mg^2)
+  set.seed(2026)
+  W  <- matrix(sample(c(-1, 1), G * B, replace = TRUE), nrow = G)
+  Vb <- as.numeric(t(W) %*% mg) / sqrt(V_cl)
+  list(V = T_obs/sqrt(V_cl), p_normal = 2*pnorm(-abs(T_obs/sqrt(V_cl))),
+       p_wild = mean(abs(Vb) >= abs(T_obs/sqrt(V_cl))), B = B, G = G)   # list(), pas c()
+}
+vuong_rob$wild_acad  <- wild_boot_v(cl_acad)
+vuong_rob$wild_dept  <- wild_boot_v(cl_dept)
+vuong_rob$wild_block <- wild_boot_v(cl_block)
+
+print(vuong_rob)
+
 
 # ---------------------------------------------------------------------
 # 5. SAUVEGARDE FINALE (étendue : tous les champs spatiaux, y compris IDW et hurdle)
