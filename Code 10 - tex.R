@@ -242,188 +242,111 @@ section("TABLEAU 10 - AME des indicateurs de ségrégation (M4)", {
 })
 
 # ================= TABLEAUX 11-14 : Code 7 (tests, bootstrap, MC, spatial) ======
-if (!is.null(c7)) {
-  cat("champs dans code7.rds :", paste(names(c7), collapse = ", "), "\n")
-  cat("N d_mod =", nrow(d_mod), "| c7$PARAM =", c7$PARAM, "| c7$beta_star =", c7$beta_star, "\n")
-  besoin <- c("tab_spec", "tab_boot", "tab_cv", "moran", "PARAM", "beta_star")
-  if (length(setdiff(besoin, names(c7))) > 0)
-    cat("!! champs manquants :", paste(setdiff(besoin, names(c7)), collapse = ", "),
-        "-> code7.rds trop vieux, relance le Code 7 v2 patché\n")
+section("TABLEAU 14 - Spatial : Moran I (Poisson & Hurdle) et rho SAR (2 poids)", {
+  # --- repli sur le checkpoint 4_spatial si code7.rds n'a pas encore les champs IDW/hurdle ---
+  ck4 <- tryCatch(readRDS(file.path(DOSSIER_OUT, "code7_4_spatial.rds")), error = function(e) NULL)
+  pick <- function(a, b) if (!is.null(a)) a else if (!is.null(b)) b else NULL
+  moran_idw   <- pick(c7$moran_idw,   if (!is.null(ck4)) ck4$moran_idw   else NULL)
+  m_sar_idw   <- pick(c7$m_sar_idw,   if (!is.null(ck4)) ck4$m_sar_idw   else NULL)
+  sar_rho_idw <- pick(c7$sar_rho_idw, if (!is.null(ck4)) ck4$sar_rho_idw else NULL)
+  mh_knn      <- pick(c7$moran_h_knn, if (!is.null(ck4)) ck4$moran_h_knn else NULL)
+  mh_idw      <- pick(c7$moran_h_idw, if (!is.null(ck4)) ck4$moran_h_idw else NULL)
+  has_idw <- !is.null(moran_idw)
   
-  section("TABLEAU 11 - Tests de spécification", {
-    ct1 <- dispersiontest(m_p, trafo = 1)
-    rob  <- c7$vdB_rob
-    vrob <- c7$vuong_rob
-    has_rob  <- !is.null(rob)
-    has_vrob <- !is.null(vrob)
-    gv <- function(x) if (is.null(x)) NA_real_ else x
-    
-    vdb_z <- if (has_rob) rob$iid[["z"]]  else c7$tab_spec$stat[2]
-    vdb_p <- if (has_rob) rob$iid[["p"]]  else c7$tab_spec$p[2]
-    vuo_V <- if (has_vrob) vrob$iid[["V"]] else c7$tab_spec$stat[3]
-    vuo_p <- if (has_vrob) vrob$iid[["p"]] else c7$tab_spec$p[3]
-    
-    ts <- data.frame(
-      Test = c("Cameron-Trivedi $\\hat\\alpha$ (trafo=2, NB2)",
-               "Cameron-Trivedi (trafo=1, NB1) : z",
-               "Van den Broek (iid)",
-               "Vuong Hurdle-Pois vs Poisson (iid)"),
-      Statistique = c(f3(c7$tab_spec$stat[1]), f3(ct1$statistic), f3(vdb_z), f2(vuo_V)),
-      p = c(fmtp(c7$tab_spec$p[1]), fmtp(ct1$p.value), fmtp(vdb_p), fmtp(vuo_p)),
-      stringsAsFactors = FALSE)
-    
-    # --- Van den Broek : versions cluster-robustes ---
-    if (has_rob) {
-      lab <- c("VdB cluster académie (G=13)", "VdB cluster département (G=96)")
-      zz  <- c(gv(rob$acad[["z"]]),  gv(rob$dept[["z"]]))
-      pp  <- c(gv(rob$acad[["p"]]),  gv(rob$dept[["p"]]))
-      if (!is.null(rob$block)) {
-        lab <- c(lab, "VdB blocs spatiaux k=10 (G=10)")
-        zz  <- c(zz, gv(rob$block[["z"]])); pp <- c(pp, gv(rob$block[["p"]]))
-      }
-      ts <- rbind(ts, data.frame(Test = lab, Statistique = f3(zz), p = fmtp(pp),
-                                 stringsAsFactors = FALSE))
-      if (!is.null(rob$wild_acad)) {
-        wlab <- c("VdB wild bootstrap B=2000 : académie (G=13)",
-                  "VdB wild bootstrap : département (G=96)")
-        wp <- c(gv(rob$wild_acad[["p_wild"]]), gv(rob$wild_dept[["p_wild"]]))
-        if (!is.null(rob$wild_block)) {
-          wlab <- c(wlab, "VdB wild bootstrap : blocs spatiaux (G=10)")
-          wp   <- c(wp, gv(rob$wild_block[["p_wild"]]))
-        }
-        ts <- rbind(ts, data.frame(Test = wlab, Statistique = "--", p = fmtp(wp),
-                                   stringsAsFactors = FALSE))
-      }
+  # extraction robuste de rho (grep) + p depuis sar_rho si dispo
+  get_rho <- function(m_sar, sar_rho) {
+    if (!is.null(sar_rho) && all(c("rho", "p") %in% names(sar_rho)))
+      return(c(rho = unname(sar_rho["rho"]), p = unname(sar_rho["p"])))
+    if (is.null(m_sar)) return(c(rho = NA_real_, p = NA_real_))
+    cf <- coef(m_sar)
+    i <- grep("^rho$", names(cf)); if (!length(i)) i <- grep("rho", names(cf))
+    if (!length(i)) return(c(rho = NA_real_, p = NA_real_))
+    rho_v <- unname(cf[i[1]])
+    V <- tryCatch(vcov(m_sar), error = function(e) NULL)
+    se <- NA_real_
+    if (!is.null(V)) {
+      j <- grep("^rho$", rownames(V)); if (!length(j)) j <- grep("rho", rownames(V))
+      if (length(j)) se <- sqrt(V[j[1], j[1]])
     }
-    
-    # --- Vuong : versions cluster-robustes (V > 0 = Hurdle préféré) ---
-    if (has_vrob) {
-      lab <- c("Vuong cluster académie (G=13)", "Vuong cluster département (G=96)")
-      vv  <- c(gv(vrob$acad[["V"]]),  gv(vrob$dept[["V"]]))
-      pp  <- c(gv(vrob$acad[["p"]]),  gv(vrob$dept[["p"]]))
-      if (!is.null(vrob$block)) {
-        lab <- c(lab, "Vuong blocs spatiaux k=10 (G=10)")
-        vv  <- c(vv, gv(vrob$block[["V"]])); pp <- c(pp, gv(vrob$block[["p"]]))
-      }
-      ts <- rbind(ts, data.frame(Test = lab, Statistique = f2(vv), p = fmtp(pp),
-                                 stringsAsFactors = FALSE))
-      if (!is.null(vrob$wild_acad)) {
-        wlab <- c("Vuong wild bootstrap B=2000 : académie (G=13)",
-                  "Vuong wild bootstrap : département (G=96)")
-        wp <- c(gv(vrob$wild_acad[["p_wild"]]), gv(vrob$wild_dept[["p_wild"]]))
-        if (!is.null(vrob$wild_block)) {
-          wlab <- c(wlab, "Vuong wild bootstrap : blocs spatiaux (G=10)")
-          wp   <- c(wp, gv(vrob$wild_block[["p_wild"]]))
-        }
-        ts <- rbind(ts, data.frame(Test = wlab, Statistique = "--", p = fmtp(wp),
-                                   stringsAsFactors = FALSE))
-      }
-    }
-    
-    note11 <- paste0(
-      "CT : test de $\\alpha=0$ dans Var(y|x) = mu + alpha*g(mu) (trafo=2 : g=mu^2, NB2, z = -0.686, p = 0.754 ; ",
-      "trafo=1 : g=mu, NB1, z = -3.779, p = 1.000) : pas de surdispersion conditionnelle. ",
-      "Van den Broek : test bilatéral de la probabilité de zéro du Poisson ; iid z = ", f3(vdb_z), " (p = ", fmtp(vdb_p),
-      ") ; cluster-robuste (académies, départements, blocs spatiaux k-means k=10) + wild cluster bootstrap (Rademacher, B = 2000) : ",
-      "H0 rejetée dans toutes les configurations. ",
-      "Vuong : m = ll_Hurdle - ll_Poisson, V > 0 = Hurdle préféré ; iid V = ", f2(vuo_V), " (p = ", fmtp(vuo_p), ") ; ",
-      if (has_vrob) paste0("cluster académie V = ", f2(gv(vrob$acad[["V"]])), " (p = ", fmtp(gv(vrob$acad[["p"]])),
-                           ", wild p = ", fmtp(gv(vrob$wild_acad[["p_wild"]])), "), département V = ", f2(gv(vrob$dept[["V"]])),
-                           ", blocs V = ", f2(gv(vrob$block[["V"]])), " : rejet robuste à la dépendance spatiale.") else "")
-    tex_tab(ts, c("Test", "Statistique", "p"), "lrr",
-            "Tests de spécification", "tab:spectests", note = note11)
-  })
+    p <- if (is.finite(se) && se > 0) 2 * pnorm(-abs(rho_v / se)) else NA_real_
+    c(rho = rho_v, p = p)
+  }
+  r_knn <- get_rho(c7$m_sar, c7$sar_rho)
+  r_idw <- if (has_idw) get_rho(m_sar_idw, sar_rho_idw) else c(rho = NA_real_, p = NA_real_)
   
-  section("TABLEAU 12 - Bootstrap cluster de l'écart beta(M4)-beta(M3)", {
-    tb <- c7$tab_boot
-    tb2 <- data.frame(Estimateur = esc(tb$estimateur), diff = f4(tb$diff), SE = f4(tb$se),
-                      ic_bas = f4(tb$ic_bas), ic_haut = f4(tb$ic_haut), p = fmtp(tb$p),
-                      stringsAsFactors = FALSE)
-    # PATCH v3 : en-têtes explicites
-    tex_tab(tb2, c("Estimateur", "$\\Delta\\beta$ (M4$-$M3)", "SE", "IC95 bas", "IC95 haut", "p"), "lrrrrr",
-            "Écart de coefficient z_expo entre M3 et M4 (delta method vs bootstrap)", "tab:boot",
-            note = "Bootstrap clusteré B = 500 (clusters = régions académiques).")
-  })
+  w_idw <- if (has_idw) "1/d, $\\leq$ 200 km, W" else "--"
+  mor <- data.frame(
+    Indicateur = c("Moran $I$ résidus Poisson M4", "Moran $I$ résidus Poisson M4",
+                   "Moran $I$ résidus Hurdle M4", "Moran $I$ résidus Hurdle M4",
+                   "$\\rho$ SAR (lagsarlm)", "$\\rho$ SAR (lagsarlm)"),
+    Poids = c("8-NN, W", w_idw, "8-NN, W", w_idw, "8-NN, W", w_idw),
+    Valeur = c(f4(c7$moran$estimate[1]),
+               if (has_idw) f4(moran_idw$estimate[1]) else "--",
+               if (!is.null(mh_knn)) f4(mh_knn$estimate[1]) else "--",
+               if (has_idw && !is.null(mh_idw)) f4(mh_idw$estimate[1]) else "--",
+               f4(r_knn["rho"]),
+               if (has_idw) f4(r_idw["rho"]) else "--"),
+    p = c(fmtp(c7$moran$p.value),
+          if (has_idw) fmtp(moran_idw$p.value) else "--",
+          if (!is.null(mh_knn)) fmtp(mh_knn$p.value) else "--",
+          if (has_idw && !is.null(mh_idw)) fmtp(mh_idw$p.value) else "--",
+          fmtp(r_knn["p"]),
+          if (has_idw) fmtp(r_idw["p"]) else "--"),
+    stringsAsFactors = FALSE)
   
-  section(paste0("TABLEAU 13 - Monte Carlo (M = 200, paramètre suivi : ", c7$PARAM, ", beta* = ", c7$beta_star, ")"), {
-    tm  <- as.data.frame(c7$tab_mc)
-    tm2 <- data.frame(DGP = tm$dgp, Estimateur = tm$estimateur,
-                      Biais = f4(tm$biais), sd_emp = f4(tm$sd_emp),
-                      mean_se = f4(tm$mean_se), couv95 = f3(tm$couv95),
-                      stringsAsFactors = FALSE)
-    # PATCH v3 : en-têtes explicites (pas de names(tm2)[6] <- ...)
-    n_na <- if (!is.null(c7$mc_raw) && is.matrix(c7$mc_raw$pois))
-      sum(is.na(c7$mc_raw$pois[3, ])) + sum(is.na(c7$mc_raw$nb[3, ])) else NA
-    tex_tab(tm2, c("DGP", "Estimateur", "Biais", "SD emp.", "SE moyen", "Couv. 95\\%"), "llrrrr",
-            paste0("Monte Carlo : biais, SD, SE moyen, couverture (M = 200, beta* = ", c7$beta_star, " sur ", c7$PARAM, ")"),
-            "tab:mc",
-            note = paste0(if (!is.na(n_na)) paste0(n_na, " réplications NB2 non convergées (NA). ") else "",
-                          "DGP Poisson + estimateur Poisson : biais = ", f4(tm$biais[1]),
-                          ", couv. 95\\% = ", f3(tm$couv95[1]),
-                          ". Sous DGP NB2, le Poisson sous-estime ses SE (couv. < 95\\%) : d'où les SE clusterisées."))
-  })
+  note14 <- paste0(
+    "Moran $I$ sur les résidus (Poisson : $y-\\hat\\mu$ via lm.morantest ; Hurdle : résidus response $y-\\hat{E}[y]$ via moran.test). ",
+    "Poisson : 8-NN $I$ = ", f4(c7$moran$estimate[1]), " (p = ", sprintf("%.1e", c7$moran$p.value), ")",
+    if (has_idw) paste0(" ; 1/d $\\leq$ 200 km $I$ = ", f4(moran_idw$estimate[1]),
+                        " (p = ", sprintf("%.1e", moran_idw$p.value), ")") else "",
+    if (!is.null(mh_knn)) paste0(". Hurdle : 8-NN $I$ = ", f4(mh_knn$estimate[1]), " (p = ", fmtp(mh_knn$p.value), ")",
+                                 if (has_idw && !is.null(mh_idw)) paste0(" ; 1/d $I$ = ", f4(mh_idw$estimate[1]), " (p = ", fmtp(mh_idw$p.value), ")") else "") else "",
+    " : autocorrélation résiduelle positive sous les deux poids, d'où SE clusterisées par département et CV par blocs. ",
+    "SAR $\\rho$ : 8-NN $\\rho$ = ", f4(r_knn["rho"]), " (p = ", fmtp(r_knn["p"]), ")",
+    if (has_idw) paste0(" ; 1/d $\\leq$ 200 km $\\rho$ = ", f4(r_idw["rho"]), " (p = ", fmtp(r_idw["p"]), ")") else "",
+    " : en 8-NN la dépendance de $y$ est absorbée par les FE régionales ; sous 1/d dense, $\\rho<0$ = ajustement intra-régional (non causal).")
+  tex_tab(mor, c("Indicateur", "Poids $w_{ij}$", "Valeur", "p"), "llrr",
+          "Autocorrélation spatiale des résidus (Moran) et SAR, 2 poids", "tab:spatial", note = note14)
+})
+
+section("TABLEAU 15 - CV blocs vs aléatoire : Poisson/Hurdle, moyenne des folds ET pondérée par ville", {
+  cv <- c7$tab_cv
+  gcol <- function(nm) if (nm %in% names(cv)) cv[[nm]] else rep(NA_real_, nrow(cv))
+  has_w   <- "mse_ponderee" %in% names(cv)     # pondération par taille de bloc (nouveau code7.rds)
+  has_mae <- "mae" %in% names(cv)
+  nt  <- c7$naive_tab
+  gnt <- function(nm, k) if (!is.null(nt) && nm %in% names(nt)) nt[[nm]][k] else NA_real_
   
-  section("TABLEAU 14 - Spatial : Moran I, SAR, CV (2 poids)", {
-    # --- repli sur le checkpoint 4_spatial si code7.rds n'a pas encore les champs IDW ---
-    ck4 <- tryCatch(readRDS(file.path(DOSSIER_OUT, "code7_4_spatial.rds")), error = function(e) NULL)
-    moran_idw   <- if (!is.null(c7$moran_idw))   c7$moran_idw   else if (!is.null(ck4$moran_idw))   ck4$moran_idw   else NULL
-    m_sar_idw   <- if (!is.null(c7$m_sar_idw))   c7$m_sar_idw   else if (!is.null(ck4$m_sar_idw))   ck4$m_sar_idw   else NULL
-    sar_rho_idw <- if (!is.null(c7$sar_rho_idw)) c7$sar_rho_idw else if (!is.null(ck4$sar_rho_idw)) ck4$sar_rho_idw else NULL
-    has_idw <- !is.null(moran_idw)
-    
-    # extraction robuste de rho (grep, comme dans le Code 6 révisé) + p depuis sar_rho si dispo
-    get_rho <- function(m_sar, sar_rho) {
-      if (!is.null(sar_rho) && all(c("rho", "p") %in% names(sar_rho)))
-        return(c(rho = unname(sar_rho["rho"]), p = unname(sar_rho["p"])))
-      if (is.null(m_sar)) return(c(rho = NA_real_, p = NA_real_))
-      cf <- coef(m_sar)
-      i <- grep("^rho$", names(cf)); if (!length(i)) i <- grep("rho", names(cf))
-      if (!length(i)) return(c(rho = NA_real_, p = NA_real_))
-      rho_v <- unname(cf[i[1]])
-      V <- tryCatch(vcov(m_sar), error = function(e) NULL)
-      se <- NA_real_
-      if (!is.null(V)) {
-        j <- grep("^rho$", rownames(V)); if (!length(j)) j <- grep("rho", rownames(V))
-        if (length(j)) se <- sqrt(V[j[1], j[1]])
-      }
-      p <- if (is.finite(se) && se > 0) 2 * pnorm(-abs(rho_v / se)) else NA_real_
-      c(rho = rho_v, p = p)
-    }
-    r_knn <- get_rho(c7$m_sar, c7$sar_rho)
-    r_idw <- if (has_idw) get_rho(m_sar_idw, sar_rho_idw) else c(rho = NA_real_, p = NA_real_)
-    
-    mor <- data.frame(
-      Indicateur = c("Moran $I$ des résidus de M4", "Moran $I$ des résidus de M4",
-                     "$\\rho$ SAR (lagsarlm)", "$\\rho$ SAR (lagsarlm)",
-                     "MSE CV par blocs spatiaux (k-means, k = 10)",
-                     "MSE CV aléatoire (10\\%, 20 répétitions)"),
-      Poids = c("8-NN, W", if (has_idw) "1/d, $\\leq$ 200 km, W" else "--",
-                "8-NN, W", if (has_idw) "1/d, $\\leq$ 200 km, W" else "--",
-                "--", "--"),
-      Valeur = c(f4(c7$moran$estimate[1]),
-                 if (has_idw) f4(moran_idw$estimate[1]) else "--",
-                 f4(r_knn["rho"]),
-                 if (has_idw) f4(r_idw["rho"]) else "--",
-                 f3(c7$tab_cv$mse[1]), f3(c7$tab_cv$mse[2])),
-      p = c(fmtp(c7$moran$p.value),
-            if (has_idw) fmtp(moran_idw$p.value) else "--",
-            fmtp(r_knn["p"]),
-            if (has_idw) fmtp(r_idw["p"]) else "--",
-            "--", "--"),
-      stringsAsFactors = FALSE)
-    
-    ratio_cv <- c7$tab_cv$mse[2] / c7$tab_cv$mse[1]     # aléatoire / blocs spatiaux
-    note14 <- paste0(
-      "Moran $I$ des résidus significatif sous les deux poids (8-NN : $I$ = ", f4(c7$moran$estimate[1]),
-      ", p = ", sprintf("%.1e", c7$moran$p.value),
-      if (has_idw) paste0(" ; 1/d $\\leq$ 200 km : $I$ = ", f4(moran_idw$estimate[1]),
-                          ", p = ", sprintf("%.1e", moran_idw$p.value)) else "",
-      ") : autocorrélation résiduelle positive, d'où SE clusterisées et CV par blocs. ",
-      "SAR $\\rho$ : 8-NN $\\rho$ = ", f4(r_knn["rho"]), " (p = ", fmtp(r_knn["p"]), "), ",
-      if (has_idw) paste0("1/d $\\leq$ 200 km $\\rho$ = ", f4(r_idw["rho"]), " (p = ", fmtp(r_idw["p"]), "), ") else "",
-      "la dépendance spatiale de $y$ est absorbée par les FE régionales en 8-NN ; sous 1/d dense, $\\rho$ négatif = ajustement intra-régional (ne pas interpréter causalement). ",
-      "MSE CV aléatoire / MSE CV blocs spatiaux = ", f2(ratio_cv),
-      " : la CV aléatoire est dominée par l'outlier Paris (y = 103) ; la CV par blocs spatiaux reste la référence (pas de fuite spatiale).")
-    tex_tab(mor, c("Indicateur", "Poids $w_{ij}$", "Valeur", "p"), "llrr",
-            "Autocorrélation spatiale des résidus, SAR et validation croisée (2 poids)", "tab:spatial", note = note14)
-  })}
+  cv2 <- data.frame(
+    Modele    = cv$modele,
+    Decoupage = cv$decoupage,
+    MSE       = f3(cv$mse),
+    MSE_pond  = if (has_w) f3(gcol("mse_ponderee")) else "--",
+    MAE       = if (has_mae) f3(gcol("mae")) else "--",
+    ratio     = if ("ratio_vs_blocs" %in% names(cv)) f2(gcol("ratio_vs_blocs")) else "--",
+    skill     = if ("skill_vs_naive" %in% names(cv)) f3(gcol("skill_vs_naive")) else "--",
+    skill_p   = if (has_w && "skill_vs_naive_pond" %in% names(cv)) f3(gcol("skill_vs_naive_pond")) else "--",
+    stringsAsFactors = FALSE)
+  
+  note15 <- paste0(
+    "MSE = moyenne des MSE par fold (10 blocs k-means k=10, ou 20 folds aléatoires 10\\%) ; ",
+    "MSE pond. = MSE poolée par ville, $\\sum_b n_b\\,\\mathrm{MSE}_b/\\sum_b n_b$ (poids = taille du fold) : ",
+    "sans effet en CV aléatoire (folds de taille constante 92), décisif en blocs (tailles 34--299). ",
+    "Skill = $1-\\mathrm{MSE}/\\mathrm{MSE}_{naive}$, baseline naïve (moyenne du train, ou prédiction 0) évaluée dans les MÊMES folds : ",
+    "naive moyenne = ", f3(gnt("naive_moyenne", 1)), " (blocs) / ", f3(gnt("naive_moyenne", 2)), " (aléa)",
+    if ("naive_moyenne_pond" %in% names(nt)) paste0(" [pond. blocs = ", f3(gnt("naive_moyenne_pond", 1)), "]") else "",
+    " ; naive zéro = ", f3(gnt("naive_zero", 1)), " / ", f3(gnt("naive_zero", 2)), ". ",
+    "Ratio aléa/blocs (Poisson) = ", f2(cv$mse[2]/cv$mse[1]),
+    " : la CV aléatoire est dominée par l'outlier Paris (y = 103) présent dans le test + fuite spatiale ; ",
+    "la CV par blocs spatiaux reste la référence.")
+  if (!is.null(c7$cmp)) {
+    cb <- c7$cmp[which.max(c7$cmp$diff), ]
+    note15 <- paste0(note15, " Diagnostic par bloc (champ cmp) : écart Hurdle$-$Poisson maximal dans le bloc ",
+                     cb$bloc, " (n = ", cb$n, ", diff = ", f3(cb$diff), ") = bloc de Paris",
+                     if (!is.null(c7$tst) && nrow(c7$tst) > 0)
+                       paste0(" ; dans ce fold la ligne Paris (y = 103) pèse sq_pois = ", f2(c7$tst$sq_pois[1]),
+                              " vs sq_hurd = ", f2(c7$tst$sq_hurd[1]), " (tst trié par sq_hurd décroissant).") else ".")
+  }
+  tex_tab(cv2, c("Modèle", "Découpage", "MSE", "MSE pond.", "MAE", "ratio", "skill", "skill pond."), "llrrrrrr",
+          "CV par blocs spatiaux vs aléatoire, Poisson et Hurdle (moyenne des folds et pondérée par ville)", "tab:cv", note = note15)
+})

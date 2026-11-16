@@ -428,6 +428,167 @@ CK("4_spatial", list(tab_cv = tab_cv, naive_tab = naive_tab, cmp = cmp,
                      moran_h_knn = moran_h_knn, moran_h_idw = moran_h_idw, m_h_sp = m_h_sp))
 cat("Checkpoint 4 OK\n")
 
+# =====================================================================
+# 4b. SENSIBILITÉ DE LA CV SPATIALE : portée, nb de blocs, forme, buffer
+# =====================================================================
+f3 <- function(x) sprintf("%.3f", x)
+D_km    <- as.matrix(dist(coords)) / 1000          # km (L93 en mètres)
+i_paris <- which.max(d_sp$y)
+
+# ---------- (A) Portée de l'autocorrélation résiduelle ----------
+m_cv   <- glm(f_cv, family = poisson, data = d_sp)  # modèle validé (sans FE)
+e_pear <- residuals(m_cv, type = "pearson")
+
+moran_band <- function(e, Dk, d1, d2, nperm = 199) {
+  W  <- (Dk > d1 & Dk <= d2) * 1                    # poids binaires de la bande
+  S0 <- sum(W)
+  if (S0 == 0) return(c(I = NA_real_, p = NA_real_, npairs = 0))
+  z  <- e - mean(e); n <- length(z)
+  stat <- function(zz) (n / S0) * sum(zz * (W %*% zz)) / sum(zz^2)
+  I0 <- stat(z)
+  Ip <- replicate(nperm, stat(sample(z)))
+  c(I = I0, p = (1 + sum(Ip >= I0)) / (nperm + 1), npairs = S0 / 2)
+}
+
+set.seed(11)
+breaks <- c(0, 10, 25, 50, 75, 100, 150, 200, 300, 400)
+corr <- do.call(rbind, lapply(seq_len(length(breaks) - 1), function(j) {
+  a <- moran_band(e_pear, D_km, breaks[j], breaks[j + 1])
+  b <- moran_band(e_pear[-i_paris], D_km[-i_paris, -i_paris], breaks[j], breaks[j + 1])
+  data.frame(d1 = breaks[j], d2 = breaks[j + 1], npairs = unname(a["npairs"]),
+             I = unname(a["I"]), p = unname(a["p"]),
+             I_sP = unname(b["I"]), p_sP = unname(b["p"]))
+}))
+print(corr)
+
+ns <- which(corr$p > 0.05)                          # 1re bande non significative
+RANGE_KM <- if (length(ns)) corr$d1[min(ns)] else max(breaks)
+RANGE_KM <- max(RANGE_KM, 25)                       # <- À VÉRIFIER / ajuster à la main sur la figure
+cat("Portée estimée de l'autocorrélation résiduelle :", RANGE_KM, "km\n")
+
+cl <- rbind(data.frame(mid = (corr$d1 + corr$d2) / 2, I = corr$I,    p = corr$p,    serie = "Toutes villes"),
+            data.frame(mid = (corr$d1 + corr$d2) / 2, I = corr$I_sP, p = corr$p_sP, serie = "Sans Paris"))
+p_corr <- ggplot(cl, aes(mid, I, colour = serie)) +
+  geom_hline(yintercept = 0, colour = "grey50") +
+  geom_vline(xintercept = RANGE_KM, linetype = "dashed", colour = "red") +
+  geom_line() + geom_point(aes(shape = p < 0.05), size = 2.5) +
+  scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 1), name = "p < 0,05") +
+  scale_x_continuous(breaks = breaks) +
+  labs(x = "Distance entre villes (km, milieu de bande)", y = "I de Moran (résidus de Pearson)",
+       colour = NULL, title = "Corrélogramme des résidus Poisson (M4 sans FE)",
+       subtitle = "Ligne rouge = portée retenue pour la taille des blocs / le buffer") +
+  theme_minimal(base_size = 11)
+ggsave(file.path(DOSSIER_OUT, "fig_correlogramme_residus.png"), p_corr, width = 8, height = 5, dpi = 150)
+print(p_corr)
+
+# ---------- (B) Moteur de CV : plis quelconques + buffer optionnel ----------
+safe_pred <- function(m, nd) {
+  if (is.null(m)) return(rep(NA_real_, nrow(nd)))
+  tryCatch(as.numeric(predict(m, nd, type = "response")), error = function(e) rep(NA_real_, nrow(nd)))
+}
+cv_oof <- function(fold, buffer_km = 0) {
+  n   <- nrow(d_sp)
+  oof <- data.frame(pois = rep(NA_real_, n), hurd = rep(NA_real_, n), naive = rep(NA_real_, n))
+  n_train <- integer(0)
+  for (f in sort(unique(fold))) {
+    te <- fold == f
+    tr <- !te
+    if (buffer_km > 0) {                            # retire du train les villes proches du test
+      dmin <- apply(D_km[, te, drop = FALSE], 1, min)
+      tr   <- tr & dmin >= buffer_km
+    }
+    n_train <- c(n_train, sum(tr))
+    trd <- d_sp[tr, ]
+    mp  <- tryCatch(suppressWarnings(glm(f_cv, family = poisson, data = trd)), error = function(e) NULL)
+    mh  <- tryCatch(suppressWarnings(hurdle(f_cv, data = trd, dist = "poisson", zero.dist = "poisson")),
+                    error = function(e) NULL)
+    oof$pois[te]  <- safe_pred(mp, d_sp[te, ])
+    oof$hurd[te]  <- safe_pred(mh, d_sp[te, ])
+    oof$naive[te] <- mean(trd$y)
+  }
+  attr(oof, "n_train") <- n_train
+  oof
+}
+
+y_obs <- d_sp$y; non_paris <- seq_along(y_obs) != i_paris
+cv_summary <- function(p, fold) {
+  se <- (y_obs - p)^2
+  c(mse = mean(se, na.rm = TRUE),                                  # poolée (1 ville = 1 poids)
+    mse_fold = mean(tapply(se, fold, mean, na.rm = TRUE), na.rm = TRUE),
+    mse_sP = mean(se[non_paris], na.rm = TRUE),                    # hors Paris
+    mae = mean(abs(y_obs - p), na.rm = TRUE),
+    n_na = sum(is.na(p)))
+}
+
+# ---------- (C) Définition des plans de CV ----------
+mk <- function(nom, type, fold, buffer = 0)
+  list(nom = nom, type = type, fold = as.integer(factor(fold)), buffer = buffer)
+km_fold   <- function(k) { set.seed(1); kmeans(scale(coords), centers = k)$cluster }  # même appel que §4
+grid_fold <- function(side_km) paste(floor(coords[, 1] / (side_km * 1000)),
+                                     floor(coords[, 2] / (side_km * 1000)))
+BUFFERS <- sort(unique(c(50, 100, round(RANGE_KM))))
+
+designs <- c(
+  lapply(c(5, 10, 20, 30, 50), function(k) mk(sprintf("kmeans k=%d", k), "kmeans", km_fold(k))),
+  lapply(c(100, 200, 300),     function(s) mk(sprintf("grille %d km", s), "grille", grid_fold(s))),
+  list(mk("région académique", "admin", d_sp$region_acad)),
+  unlist(lapply(c(10, 30), function(k) lapply(BUFFERS, function(r)
+    mk(sprintf("kmeans k=%d + buffer %d km", k, r), "kmeans+buffer", km_fold(k), r))),
+    recursive = FALSE)
+)
+cat("k=10 identique à `bloc` de §4 :", all(designs[[2]]$fold == as.integer(factor(bloc))), "\n")
+
+# ---------- (D) Exécution (quelques minutes : ~300 plis x 2 modèles) ----------
+res <- do.call(rbind, lapply(designs, function(dz) {
+  t0  <- Sys.time()
+  oof <- cv_oof(dz$fold, dz$buffer)
+  cat(sprintf("%-34s %5.0f s\n", dz$nom, as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+  sp <- cv_summary(oof$pois, dz$fold); sh <- cv_summary(oof$hurd, dz$fold); sn <- cv_summary(oof$naive, dz$fold)
+  data.frame(design = dz$nom, type = dz$type,
+             n_plis = length(unique(dz$fold)), buffer_km = dz$buffer,
+             taille_test = round(mean(table(dz$fold)), 1),
+             n_train_moy = round(mean(attr(oof, "n_train"))),
+             mse_pois = sp[["mse"]], mse_hurd = sh[["mse"]], mse_naif = sn[["mse"]],
+             mse_pois_sansParis = sp[["mse_sP"]], mse_hurd_sansParis = sh[["mse_sP"]],
+             mse_naif_sansParis = sn[["mse_sP"]],
+             mse_pli_pois = sp[["mse_fold"]], mse_pli_hurd = sh[["mse_fold"]],
+             mae_pois = sp[["mae"]], mae_hurd = sh[["mae"]],
+             n_NA_pois = sp[["n_na"]], n_NA_hurd = sh[["n_na"]])
+}))
+res$skill_pois <- 1 - res$mse_pois / res$mse_naif
+res$skill_hurd <- 1 - res$mse_hurd / res$mse_naif
+res$gagnant            <- ifelse(res$mse_hurd < res$mse_pois, "Hurdle", "Poisson")
+res$gagnant_sansParis  <- ifelse(res$mse_hurd_sansParis < res$mse_pois_sansParis, "Hurdle", "Poisson")
+
+cat("Check k=10 : MSE poolée Poisson =", f3(res$mse_pois[res$design == "kmeans k=10"]),
+    "| tab_cv$mse_ponderee[1] =", f3(tab_cv$mse_ponderee[1]), "\n")
+print(res %>% mutate(across(where(is.numeric), ~ round(., 3))))
+write.csv(res,  file.path(DOSSIER_OUT, "tab_cv_sensibilite.csv"), row.names = FALSE)
+write.csv(corr, file.path(DOSSIER_OUT, "tab_correlogramme.csv"),  row.names = FALSE)
+
+# ---------- (E) Figure ----------
+lg <- do.call(rbind, lapply(c("pois", "hurd", "naif"), function(m) rbind(
+  data.frame(design = res$design, modele = m, panel = "Avec Paris", mse = res[[paste0("mse_", m)]]),
+  data.frame(design = res$design, modele = m, panel = "Sans Paris", mse = res[[paste0("mse_", m, "_sansParis")]]))))
+lg$design <- factor(lg$design, levels = res$design)
+lg$modele <- factor(lg$modele, levels = c("pois", "hurd", "naif"),
+                    labels = c("Poisson", "Hurdle", "Naïf (moy. train)"))
+p_sens <- ggplot(lg, aes(design, mse, colour = modele, group = modele)) +
+  geom_line(alpha = 0.4) + geom_point(size = 2.2) +
+  facet_wrap(~ panel, scales = "free_y", ncol = 1) +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = "MSE poolée (1 ville = 1 poids)", colour = NULL,
+       title = "Sensibilité de la CV spatiale au découpage",
+       subtitle = "Buffer = villes du train à moins de r km du pli test retirées")
+ggsave(file.path(DOSSIER_OUT, "fig_cv_sensibilite.png"), p_sens, width = 11, height = 8, dpi = 150)
+print(p_sens)
+
+CK("4b_cv_sensibilite", list(res = res, corr = corr, RANGE_KM = RANGE_KM))
+cat("Checkpoint 4b OK\n")
+
+
+
 # ============ Van den Broek : versions cluster-robustes (spatial) ============
 # (m_p = Poisson M4 ; adapte le nom si ton Code 7 l'appelle autrement)
 m_p <- modeles$Poisson                              # M4 avec FE (cohérent avec les tests CT)
